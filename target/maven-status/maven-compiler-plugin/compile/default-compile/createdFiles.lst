@@ -8,3 +8,4 @@ com/rcst/layers/BitAttention.class
 com/rcst/Tokenizer.class
 com/rcst/TrainingDataLoader.class
 com/rcst/layers/RMSNorm.class
+com/rcst/layers/BitFFN.class
