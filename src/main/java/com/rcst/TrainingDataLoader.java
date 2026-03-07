@@ -45,6 +45,7 @@ public class TrainingDataLoader {
             .sum();
         long[] flat = new long[(int) total];
         int cursor = 0;
+
         for (NDArray t : shuffled) {
             long[] ids = t.toLongArray();
             System.arraycopy(ids, 0, flat, cursor, ids.length);
