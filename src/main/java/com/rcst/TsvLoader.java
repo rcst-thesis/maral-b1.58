@@ -10,17 +10,12 @@ import java.util.List;
 
 public class TsvLoader {
 
-    private final int textColumnIndex;
-    private final boolean hasHeader;
-
-    public TsvLoader(int textColumnIndex, boolean hasHeader) {
-        this.textColumnIndex = textColumnIndex;
-        this.hasHeader = hasHeader;
-    }
-
+    /**
+     * Loads a two-column TSV (source at col 0, target at col 1) and returns
+     * all sentences in a single list, ready for SentencePiece training.
+     */
     public List<String> load(Path tsvPath) throws IOException {
         List<String> sentences = new ArrayList<>();
-        boolean firstLine = true;
 
         try (
             BufferedReader br = Files.newBufferedReader(
@@ -30,21 +25,12 @@ public class TsvLoader {
         ) {
             String line;
             while ((line = br.readLine()) != null) {
-                if (firstLine && hasHeader) {
-                    firstLine = false;
-                    continue;
-                }
-                firstLine = false;
-
                 String[] cols = line.split("\t", -1);
-                if (textColumnIndex >= cols.length) continue;
+                if (cols.length < 2) continue;
 
-                String text = cols[textColumnIndex].trim().replaceAll(
-                    "\\s+",
-                    " "
-                );
-                if (!text.isEmpty()) {
-                    sentences.add(text);
+                for (int i = 0; i < 2; i++) {
+                    String text = cols[i].trim().replaceAll("\\s+", " ");
+                    if (!text.isEmpty()) sentences.add(text);
                 }
             }
         }
