@@ -109,23 +109,31 @@ public class TrainingDataLoaderTest extends TestCase {
     // simultanious prediction
     public void testContextTargetPairs() {
         try (Batch batch = loader.sampleTrain()) {
-            long[] x = batch.getData().head().toLongArray();
-            long[] y = batch.getLabels().head().toLongArray();
+            NDArray xTensor = batch.getData().head();
+            NDArray yTensor = batch.getLabels().head();
 
-            // logs the first[BLOCK_SIZE + 1] elements
-            System.out.println(
-                "Batch (x)" + Arrays.toString(Arrays.copyOf(x, BLOCK_SIZE + 1))
-            );
+            // print batch dimention
+            for (int b = 0; b < BATCH_SIZE; b++) {
+                long[] x = xTensor.get(b + ":").toLongArray();
+                long[] y = yTensor.get(b + ":").toLongArray();
 
-            for (int t = 0; t < BLOCK_SIZE; t++) {
-                long[] context = Arrays.copyOfRange(x, 0, t + 1);
-                long target = y[t];
-
-                System.out.printf(
-                    "when input is %s the target: %d%n",
-                    Arrays.toString(context),
-                    target
+                // logs the first[BLOCK_SIZE + 1] elements
+                System.out.println(
+                    "Batch (x)" +
+                        Arrays.toString(Arrays.copyOf(x, BLOCK_SIZE + 1))
                 );
+
+                System.out.printf("Batch %d %n", b);
+
+                for (int t = 0; t < BLOCK_SIZE; t++) {
+                    long[] context = Arrays.copyOfRange(x, 0, t + 1);
+                    long target = y[t];
+                    System.out.printf(
+                        "  when input is %-40s the target: %d%n",
+                        Arrays.toString(context),
+                        target
+                    );
+                }
             }
         }
     }
