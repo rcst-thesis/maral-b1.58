@@ -2,5 +2,6 @@ com/rcst/TokenEmbeddingTable.class
 com/rcst/TensorEncoder.class
 com/rcst/Tokenizer.class
 com/rcst/TrainingDataLoader.class
+com/rcst/layers/RMSNorm.class
 com/rcst/App.class
 com/rcst/layers/BitLinear.class

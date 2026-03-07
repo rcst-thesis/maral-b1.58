@@ -1,9 +1,11 @@
 com/rcst/AppTest.class
 com/rcst/layers/BitLinearTest$1.class
+com/rcst/layers/RMSNormTest$1.class
 com/rcst/TokenizerTest.class
 com/rcst/TrainingDataLoaderTest.class
 com/rcst/layers/BitLinearTest.class
 com/rcst/TokenEmbeddingTableTest.class
+com/rcst/layers/RMSNormTest.class
 com/rcst/SpmModelTest.class
 com/rcst/TrainingDataLoaderTest$1.class
 com/rcst/TensorEncoderTest.class
