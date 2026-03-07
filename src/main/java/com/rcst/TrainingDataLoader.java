@@ -108,10 +108,13 @@ public class TrainingDataLoader {
             System.arraycopy(chunk, 1, yRows[b], 0, blockSize); // y: [1, blockSize]
         }
 
-        NDArray x = manager.create(xRows); // shape: (batch_size, block_size)
-        NDArray y = manager.create(yRows); // shape: (batch_size, block_size)
+        // Use a child manager so Batch.close() only releases the batch arrays,
+        // not the parent manager that owns train/val.
+        NDManager batchManager = manager.newSubManager();
+        NDArray x = batchManager.create(xRows); // shape: (batch_size, block_size)
+        NDArray y = batchManager.create(yRows); // shape: (batch_size, block_size)
         return new Batch(
-            manager,
+            batchManager,
             new NDList(x),
             new NDList(y),
             batchSize,

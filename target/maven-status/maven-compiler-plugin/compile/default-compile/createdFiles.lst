@@ -1,3 +1,4 @@
+com/rcst/TokenEmbeddingTable.class
 com/rcst/TensorEncoder.class
 com/rcst/Tokenizer.class
 com/rcst/TrainingDataLoader.class

@@ -5,7 +5,10 @@ import ai.djl.ndarray.NDManager;
 import ai.djl.training.dataset.Batch;
 import java.util.Arrays;
 import java.util.List;
+import junit.extensions.TestSetup;
+import junit.framework.Test;
 import junit.framework.TestCase;
+import junit.framework.TestSuite;
 
 public class TrainingDataLoaderTest extends TestCase {
 
@@ -26,32 +29,36 @@ public class TrainingDataLoaderTest extends TestCase {
         "Mahilig akong matuto ng bagong wika."
     );
 
-    private NDManager manager;
-    private Tokenizer tokenizer;
-    private TensorEncoder encoder;
-    private TrainingDataLoader loader;
+    // Shared across all tests — safe now that Batch uses a child manager
+    private static NDManager manager;
+    private static Tokenizer tokenizer;
+    private static TrainingDataLoader loader;
 
-    @Override
-    protected void setUp() throws Exception {
-        manager = NDManager.newBaseManager();
-        tokenizer = new Tokenizer();
-        encoder = new TensorEncoder(tokenizer, manager);
-        NDArray[] tensors = encoder.encodeBatch(SENTENCES);
+    public static Test suite() {
+        return new TestSetup(new TestSuite(TrainingDataLoaderTest.class)) {
+            @Override
+            protected void setUp() throws Exception {
+                manager = NDManager.newBaseManager();
+                tokenizer = new Tokenizer();
+                TensorEncoder encoder = new TensorEncoder(tokenizer, manager);
+                NDArray[] tensors = encoder.encodeBatch(SENTENCES);
 
-        loader = new TrainingDataLoader(
-            tensors,
-            manager,
-            BLOCK_SIZE,
-            BATCH_SIZE,
-            TRAIN_RATIO,
-            42L
-        );
-    }
+                loader = new TrainingDataLoader(
+                    tensors,
+                    manager,
+                    BLOCK_SIZE,
+                    BATCH_SIZE,
+                    TRAIN_RATIO,
+                    42L
+                );
+            }
 
-    @Override
-    protected void tearDown() throws Exception {
-        tokenizer.close();
-        manager.close();
+            @Override
+            protected void tearDown() throws Exception {
+                tokenizer.close();
+                manager.close();
+            }
+        };
     }
 
     public void testSplitSizesAreNonZero() {
@@ -106,18 +113,16 @@ public class TrainingDataLoaderTest extends TestCase {
         }
     }
 
-    // simultanious prediction
+    // simultaneous prediction
     public void testContextTargetPairs() {
         try (Batch batch = loader.sampleTrain()) {
             NDArray xTensor = batch.getData().head();
             NDArray yTensor = batch.getLabels().head();
 
-            // print batch dimention
             for (int b = 0; b < BATCH_SIZE; b++) {
                 long[] x = xTensor.get(b + ":").toLongArray();
                 long[] y = yTensor.get(b + ":").toLongArray();
 
-                // logs the first[BLOCK_SIZE + 1] elements
                 System.out.println(
                     "Batch (x)" +
                         Arrays.toString(Arrays.copyOf(x, BLOCK_SIZE + 1))
