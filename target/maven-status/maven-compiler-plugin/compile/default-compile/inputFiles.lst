@@ -3,3 +3,4 @@
 /home/kasutu/Documents/dev/thesis/maral-b1.58/src/main/java/com/rcst/TokenEmbeddingTable.java
 /home/kasutu/Documents/dev/thesis/maral-b1.58/src/main/java/com/rcst/Tokenizer.java
 /home/kasutu/Documents/dev/thesis/maral-b1.58/src/main/java/com/rcst/TrainingDataLoader.java
+/home/kasutu/Documents/dev/thesis/maral-b1.58/src/main/java/com/rcst/layers/BitLinear.java
