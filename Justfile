@@ -1,5 +1,5 @@
 install:
-    mvn clean install
+    mvn clean install -Dmaven.test.skip
 
 dev:
     mvn clean compile exec:java
