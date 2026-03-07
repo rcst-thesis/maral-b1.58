@@ -20,6 +20,7 @@ public class SpmModelTest extends TestCase {
             true,
             Scoring.HIGHEST_SCORE
         );
+
         List<Integer> ids = model.encodeNormalized(raw, algorithm);
         String decoded = model.decodeSmart(ids);
         System.out.println("Token IDs  : " + ids);
