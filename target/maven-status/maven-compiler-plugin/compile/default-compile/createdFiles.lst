@@ -1,4 +1,5 @@
 com/rcst/TokenEmbeddingTable.class
+com/rcst/layers/RoPE.class
 com/rcst/App.class
 com/rcst/layers/BitLinear.class
 com/rcst/ModelConfig.class
