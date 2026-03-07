@@ -22,8 +22,8 @@ public class TrainingDataLoader {
     /**
      * @param tensors    pre-encoded 1-D NDArrays from TensorEncoder.encodeBatch()
      * @param manager    NDManager that owns the tensors
-     * @param blockSize  context length — tokens per input sequence
-     * @param batchSize  independent chunks per batch
+     * @param blockSize  context length — maximum context length for predicitons
+     * @param batchSize  how many independent chunks will be processed in parallel
      * @param trainRatio fraction of tokens used for training (e.g. 0.8)
      * @param seed       random seed for reproducibility
      */
