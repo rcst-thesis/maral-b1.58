@@ -5,6 +5,7 @@
 /home/kasutu/Documents/dev/thesis/maral-b1.58/src/test/java/com/rcst/TokenizerTest.java
 /home/kasutu/Documents/dev/thesis/maral-b1.58/src/test/java/com/rcst/TrainingDataLoaderTest.java
 /home/kasutu/Documents/dev/thesis/maral-b1.58/src/test/java/com/rcst/layers/BitAttentionTest.java
+/home/kasutu/Documents/dev/thesis/maral-b1.58/src/test/java/com/rcst/layers/BitEncoderBlockTest.java
 /home/kasutu/Documents/dev/thesis/maral-b1.58/src/test/java/com/rcst/layers/BitFFNTest.java
 /home/kasutu/Documents/dev/thesis/maral-b1.58/src/test/java/com/rcst/layers/BitLinearTest.java
 /home/kasutu/Documents/dev/thesis/maral-b1.58/src/test/java/com/rcst/layers/RMSNormTest.java

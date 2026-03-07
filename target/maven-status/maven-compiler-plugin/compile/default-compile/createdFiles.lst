@@ -3,6 +3,7 @@ com/rcst/layers/RoPE.class
 com/rcst/App.class
 com/rcst/layers/BitLinear.class
 com/rcst/ModelConfig.class
+com/rcst/layers/BitEncoderBlock.class
 com/rcst/TensorEncoder.class
 com/rcst/layers/BitAttention.class
 com/rcst/Tokenizer.class
