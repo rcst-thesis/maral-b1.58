@@ -8,7 +8,9 @@ com/rcst/TrainingDataLoaderTest$1.class
 com/rcst/TensorEncoderTest.class
 com/rcst/TokenEmbeddingTableTest$1.class
 com/rcst/layers/RMSNormTest$1.class
+com/rcst/layers/BitAttentionTest.class
 com/rcst/TrainingDataLoaderTest.class
 com/rcst/layers/BitLinearTest.class
 com/rcst/layers/RoPETest.class
+com/rcst/layers/BitAttentionTest$1.class
 com/rcst/TokenEmbeddingTableTest.class
