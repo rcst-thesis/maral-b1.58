@@ -1,10 +1,8 @@
 package com.rcst;
 
 import ai.djl.ndarray.NDArray;
-import ai.djl.ndarray.NDManager;
 import ai.djl.training.dataset.Batch;
 import java.util.Arrays;
-import java.util.List;
 import junit.extensions.TestSetup;
 import junit.framework.Test;
 import junit.framework.TestCase;
@@ -12,90 +10,49 @@ import junit.framework.TestSuite;
 
 public class TrainingDataLoaderTest extends TestCase {
 
-    private static final int BLOCK_SIZE = 8;
-    private static final int BATCH_SIZE = 4;
-    private static final double TRAIN_RATIO = 0.8;
-
-    private static final List<String> SENTENCES = List.of(
-        "Good morning, how are you?",
-        "Magandang umaga, kumusta ka?",
-        "I am going to the market.",
-        "Pupunta ako sa palengke.",
-        "The weather is nice today.",
-        "Maganda ang panahon ngayon.",
-        "Can you help me please?",
-        "Maaari mo ba akong tulungan?",
-        "I love learning new languages.",
-        "Mahilig akong matuto ng bagong wika."
-    );
-
-    // Shared across all tests — safe now that Batch uses a child manager
-    private static NDManager manager;
-    private static Tokenizer tokenizer;
-    private static TrainingDataLoader loader;
-
     public static Test suite() {
         return new TestSetup(new TestSuite(TrainingDataLoaderTest.class)) {
             @Override
             protected void setUp() throws Exception {
-                manager = NDManager.newBaseManager();
-                tokenizer = new Tokenizer();
-                TensorEncoder encoder = new TensorEncoder(tokenizer, manager);
-                NDArray[] tensors = encoder.encodeBatch(SENTENCES);
-
-                loader = new TrainingDataLoader(
-                    tensors,
-                    manager,
-                    BLOCK_SIZE,
-                    BATCH_SIZE,
-                    TRAIN_RATIO,
-                    42L
-                );
+                TestFixture.init();
             }
 
             @Override
             protected void tearDown() throws Exception {
-                tokenizer.close();
-                manager.close();
+                TestFixture.destroy();
             }
         };
     }
 
     public void testSplitSizesAreNonZero() {
-        assertTrue(loader.trainSize() > 0);
-        assertTrue(loader.valSize() > 0);
+        assertTrue(TestFixture.loader.trainSize() > 0);
+        assertTrue(TestFixture.loader.valSize() > 0);
 
         System.out.printf(
-            "tokens: train=%,d  val=%,d%n",
-            loader.trainSize(),
-            loader.valSize()
+            "train=%,d  val=%,d%n",
+            TestFixture.loader.trainSize(),
+            TestFixture.loader.valSize()
         );
     }
 
     public void testTrainSplitIsLargerThanVal() {
-        assertTrue(loader.trainSize() > loader.valSize());
-
-        System.out.printf(
-            "tokens: train=%,d > val=%,d%n",
-            loader.trainSize(),
-            loader.valSize()
+        assertTrue(
+            TestFixture.loader.trainSize() > TestFixture.loader.valSize()
         );
     }
 
     public void testTrainBatchShape() {
-        try (Batch batch = loader.sampleTrain()) {
+        try (Batch batch = TestFixture.loader.sampleTrain()) {
             NDArray x = batch.getData().head();
             NDArray y = batch.getLabels().head();
 
-            assertEquals(BATCH_SIZE, (int) x.getShape().get(0));
-            assertEquals(BLOCK_SIZE, (int) x.getShape().get(1));
-            assertEquals(BATCH_SIZE, (int) y.getShape().get(0));
-            assertEquals(BLOCK_SIZE, (int) y.getShape().get(1));
+            assertEquals(TestFixture.BATCH_SIZE, (int) x.getShape().get(0));
+            assertEquals(TestFixture.BLOCK_SIZE, (int) x.getShape().get(1));
+            assertEquals(TestFixture.BATCH_SIZE, (int) y.getShape().get(0));
+            assertEquals(TestFixture.BLOCK_SIZE, (int) y.getShape().get(1));
 
-            System.out.println("x " + x.toDebugString(true));
-            System.out.println("y " + y.toDebugString(true));
             System.out.printf(
-                "train batch  x=%s  y=%s%n",
+                "train batch x=%s  y=%s%n",
                 x.getShape(),
                 y.getShape()
             );
@@ -103,65 +60,63 @@ public class TrainingDataLoaderTest extends TestCase {
     }
 
     public void testValBatchShape() {
-        try (Batch batch = loader.sampleValidation()) {
+        try (Batch batch = TestFixture.loader.sampleValidation()) {
             NDArray x = batch.getData().head();
-            assertEquals(BATCH_SIZE, (int) x.getShape().get(0));
-            assertEquals(BLOCK_SIZE, (int) x.getShape().get(1));
-
-            System.out.println("x " + x.toDebugString(true));
-            System.out.printf("val batch    x=%s%n", x.getShape());
+            assertEquals(TestFixture.BATCH_SIZE, (int) x.getShape().get(0));
+            assertEquals(TestFixture.BLOCK_SIZE, (int) x.getShape().get(1));
+            System.out.printf("val batch x=%s%n", x.getShape());
         }
     }
 
-    // simultaneous prediction
+    public void testXAndYAreShiftedByOne() {
+        try (Batch batch = TestFixture.loader.sampleTrain()) {
+            long[] x = batch.getData().head().toLongArray();
+            long[] y = batch.getLabels().head().toLongArray();
+
+            // x[col+1] == y[col] for every column in the first row
+            for (int col = 0; col < TestFixture.BLOCK_SIZE - 1; col++) {
+                assertEquals(
+                    "shift mismatch at col " + col,
+                    x[col + 1],
+                    y[col]
+                );
+            }
+
+            System.out.printf(
+                "x=%s%ny=%s%n",
+                Arrays.toString(Arrays.copyOf(x, TestFixture.BLOCK_SIZE)),
+                Arrays.toString(Arrays.copyOf(y, TestFixture.BLOCK_SIZE))
+            );
+        }
+    }
+
     public void testContextTargetPairs() {
-        try (Batch batch = loader.sampleTrain()) {
+        try (Batch batch = TestFixture.loader.sampleTrain()) {
             NDArray xTensor = batch.getData().head();
             NDArray yTensor = batch.getLabels().head();
 
-            for (int b = 0; b < BATCH_SIZE; b++) {
+            for (int b = 0; b < TestFixture.BATCH_SIZE; b++) {
                 long[] x = xTensor.get(b + ":").toLongArray();
                 long[] y = yTensor.get(b + ":").toLongArray();
 
-                System.out.println(
-                    "Batch (x)" +
-                        Arrays.toString(Arrays.copyOf(x, BLOCK_SIZE + 1))
-                );
+                System.out.printf("batch %d%n", b);
 
-                System.out.printf("Batch %d %n", b);
-
-                for (int t = 0; t < BLOCK_SIZE; t++) {
-                    long[] context = Arrays.copyOfRange(x, 0, t + 1);
-                    long target = y[t];
+                for (int t = 0; t < TestFixture.BLOCK_SIZE; t++) {
                     System.out.printf(
-                        "  when input is %-40s the target: %d%n",
-                        Arrays.toString(context),
-                        target
+                        "  context=%-40s → target=%d%n",
+                        Arrays.toString(Arrays.copyOfRange(x, 0, t + 1)),
+                        y[t]
                     );
                 }
             }
         }
     }
 
-    public void testXAndYAreShiftedByOne() {
-        try (Batch batch = loader.sampleTrain()) {
-            long[] x = batch.getData().head().toLongArray();
-            long[] y = batch.getLabels().head().toLongArray();
-
-            for (int col = 0; col < BLOCK_SIZE - 1; col++) {
-                assertEquals(x[col + 1], y[col]);
-            }
-
-            System.out.printf(
-                "x=%s%ny=%s%n",
-                Arrays.toString(Arrays.copyOf(x, BLOCK_SIZE)),
-                Arrays.toString(Arrays.copyOf(y, BLOCK_SIZE))
-            );
-        }
-    }
-
     public void testSamplesAreDifferentAcrossCalls() {
-        try (Batch a = loader.sampleTrain(); Batch b = loader.sampleTrain()) {
+        try (
+            Batch a = TestFixture.loader.sampleTrain();
+            Batch b = TestFixture.loader.sampleTrain()
+        ) {
             long[] aIds = a.getData().head().toLongArray();
             long[] bIds = b.getData().head().toLongArray();
             boolean differs = false;
@@ -173,13 +128,7 @@ public class TrainingDataLoaderTest extends TestCase {
                 }
             }
 
-            assertTrue(differs);
-
-            System.out.printf(
-                "sample1=%s%nsample2=%s%n",
-                Arrays.toString(Arrays.copyOf(aIds, BLOCK_SIZE)),
-                Arrays.toString(Arrays.copyOf(bIds, BLOCK_SIZE))
-            );
+            assertTrue("consecutive samples must differ", differs);
         }
     }
 }

@@ -1,0 +1,49 @@
+model:
+  name: maral-b1.58-125m
+  version: 0.1.0
+
+# ── Tokenizer ─────────────────────────────────────────────────────────────────
+tokenizer:
+  model_path: src/main/resources/models/maral.bpe.model
+  vocab_size: 8000
+  pad_id: 0
+  unk_id: 1
+  bos_id: 2
+  eos_id: 3
+
+# ── Architecture ──────────────────────────────────────────────────────────────
+architecture:
+  d_model: 512 # embedding dimension
+  n_heads: 8 # attention heads (d_model must be divisible by n_heads)
+  n_encoder_layers: 6 # BitEncoderBlock stack depth
+  n_decoder_layers: 6 # BitDecoderBlock stack depth
+  d_ffn: 1344 # FFN hidden dim (≈ 2.625 × d_model, ReLU² friendly)
+  max_seq_len: 256 # maximum source/target token length
+  dropout: 0.0 # BitNet b1.58 trains without dropout
+  eps: 1.0e-6 # RMSNorm epsilon
+  rope_base: 10000 # RoPE base frequency θ
+
+# ── BitLinear quantization ────────────────────────────────────────────────────
+quantization:
+  weight_bits: 1.58 # ternary {-1, 0, +1}
+  activation_bits: 8 # per-token absmax quantization
+  eps: 1.0e-8 # absmean epsilon (weight quant denominator guard)
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size: 32
+  block_size: 256 # matches max_seq_len
+  train_ratio: 0.9
+  seed: 42
+  max_epochs: 50
+  learning_rate: 3.0e-4
+  weight_decay: 0.1
+  warmup_steps: 1000
+  grad_clip: 1.0
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+data:
+  corpus: src/main/resources/data/corpus.txt
+  parallel: src/main/resources/data/en-tl.tsv
+  source_lang: en
+  target_lang: tl

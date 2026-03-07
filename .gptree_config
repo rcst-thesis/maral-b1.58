@@ -25,6 +25,6 @@ showIgnoredInTree: false
 # Whether to show only default ignored files in the directory tree while still respecting gitignore
 showDefaultIgnoredInTree: false
 # Previously selected files (when using the -s or --save flag previously)
-previousFiles: src/main/java/com/rcst/App.java,src/main/java/com/rcst/TensorEncoder.java,src/main/java/com/rcst/TokenEmbeddingTable.java,src/main/java/com/rcst/Tokenizer.java,src/main/java/com/rcst/TrainingDataLoader.java,src/test/java/com/rcst/AppTest.java,src/test/java/com/rcst/SpmModelTest.java,src/test/java/com/rcst/TensorEncoderTest.java,src/test/java/com/rcst/TokenizerTest.java,src/test/java/com/rcst/TrainingDataLoaderTest.java
+previousFiles: src/main/java/com/rcst/App.java,src/main/java/com/rcst/TensorEncoder.java,src/main/java/com/rcst/TokenEmbeddingTable.java,src/main/java/com/rcst/Tokenizer.java,src/main/java/com/rcst/TrainingDataLoader.java,src/test/java/com/rcst/AppTest.java,src/test/java/com/rcst/SpmModelTest.java,src/test/java/com/rcst/TensorEncoderTest.java,src/test/java/com/rcst/TokenizerTest.java,src/test/java/com/rcst/TrainingDataLoaderTest.java,scripts/train_spm.py
 # Excluded directories (when using the -s or --save flag previously or edited in UI)
 excludeDirs: 
