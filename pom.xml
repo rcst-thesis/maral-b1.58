@@ -12,11 +12,11 @@
   <url>http://maven.apache.org</url>
 
   <dependencies>
-  <!-- Source: https://mvnrepository.com/artifact/ai.djl.sentencepiece/sentencepiece -->
+  <!-- Source: https://mvnrepository.com/artifact/io.github.eix128/sentencepiece4j -->
   <dependency>
-      <groupId>ai.djl.sentencepiece</groupId>
-      <artifactId>sentencepiece</artifactId>
-      <version>0.36.0</version>
+      <groupId>io.github.eix128</groupId>
+      <artifactId>sentencepiece4j</artifactId>
+      <version>1.0.2</version>
       <scope>compile</scope>
   </dependency>
 

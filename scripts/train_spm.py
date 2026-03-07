@@ -6,8 +6,9 @@ import sentencepiece as spm  # pyright: ignore[reportMissingImports]
 # config
 INPUT_TSV = "src/main/resources/data/en-tl.tsv"
 CORPUS_TXT = "src/main/resources/data/corpus.txt"
-MODEL_PREFIX = "src/main/resources/models/en_tl"
+MODEL_PREFIX = "src/main/resources/models/maral.bpe"
 MODEL_TYPE = "bpe"
+# possible chars the model can see/emit
 TARGET_VOCAB = 8000
 SMOKE_SAMPLES = [
     "Good morning, how are you?",
