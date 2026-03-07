@@ -1,8 +1,5 @@
-<project
-    xmlns="http://maven.apache.org/POM/4.0.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd"
->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.rcst</groupId>
   <artifactId>maral-b1.58</artifactId>
@@ -12,13 +9,37 @@
   <url>http://maven.apache.org</url>
 
   <dependencies>
-  <!-- Source: https://mvnrepository.com/artifact/io.github.eix128/sentencepiece4j -->
-  <dependency>
+    <!-- Source: https://mvnrepository.com/artifact/io.github.eix128/sentencepiece4j -->
+    <dependency>
       <groupId>io.github.eix128</groupId>
       <artifactId>sentencepiece4j</artifactId>
       <version>1.0.2</version>
       <scope>compile</scope>
-  </dependency>
+    </dependency>
+
+    <!-- Source: https://mvnrepository.com/artifact/ai.djl/api -->
+    <dependency>
+      <groupId>ai.djl</groupId>
+      <artifactId>api</artifactId>
+      <version>0.36.0</version>
+      <scope>compile</scope>
+    </dependency>
+
+    <!-- Source: https://mvnrepository.com/artifact/ai.djl.pytorch/pytorch-engine -->
+    <dependency>
+      <groupId>ai.djl.pytorch</groupId>
+      <artifactId>pytorch-engine</artifactId>
+      <version>0.36.0</version>
+      <scope>compile</scope>
+    </dependency>
+
+    <!-- Source: https://mvnrepository.com/artifact/org.slf4j/slf4j-simple -->
+    <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-simple</artifactId>
+        <version>2.0.17</version>
+        <scope>test</scope>
+    </dependency>
 
     <dependency>
       <groupId>junit</groupId>
@@ -35,7 +56,7 @@
         <artifactId>exec-maven-plugin</artifactId>
         <version>3.6.3</version>
         <configuration>
-            <!-- Entry point -->
+          <!-- Entry point -->
           <mainClass>com.rcst.App</mainClass>
         </configuration>
       </plugin>
