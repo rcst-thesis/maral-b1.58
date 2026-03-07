@@ -106,6 +106,30 @@ public class TrainingDataLoaderTest extends TestCase {
         }
     }
 
+    // simultanious prediction
+    public void testContextTargetPairs() {
+        try (Batch batch = loader.sampleTrain()) {
+            long[] x = batch.getData().head().toLongArray();
+            long[] y = batch.getLabels().head().toLongArray();
+
+            // logs the first[BLOCK_SIZE + 1] elements
+            System.out.println(
+                "Batch (x)" + Arrays.toString(Arrays.copyOf(x, BLOCK_SIZE + 1))
+            );
+
+            for (int t = 0; t < BLOCK_SIZE; t++) {
+                long[] context = Arrays.copyOfRange(x, 0, t + 1);
+                long target = y[t];
+
+                System.out.printf(
+                    "when input is %s the target: %d%n",
+                    Arrays.toString(context),
+                    target
+                );
+            }
+        }
+    }
+
     public void testXAndYAreShiftedByOne() {
         try (Batch batch = loader.sampleTrain()) {
             long[] x = batch.getData().head().toLongArray();
