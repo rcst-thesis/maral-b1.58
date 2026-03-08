@@ -15,9 +15,11 @@ import com.sentencepiece.SentencePieceAlgorithm;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -55,11 +57,28 @@ public class Trainer implements AutoCloseable {
     private int startEpoch = 1;
     private float bestValLoss = Float.MAX_VALUE;
 
+    // CSV logging
+    private final Path csvPath;
+    private PrintWriter csvWriter;
+
     public Trainer() throws Exception {
         this.cfg = ModelConfig.get();
 
         // FORCE CPU: Create manager with CPU device
         this.manager = NDManager.newBaseManager(Device.cpu());
+
+        // Setup CSV logging
+        this.csvPath = Paths.get(cfg.checkpointDir, "training_log.csv");
+        Files.createDirectories(csvPath.getParent());
+        this.csvWriter = new PrintWriter(
+            Files.newBufferedWriter(
+                csvPath,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING
+            )
+        );
+        this.csvWriter.println("epoch,train_loss,val_loss,learning_rate");
+        this.csvWriter.flush();
 
         System.out.println("[INIT] Using CPU for training");
         printMemoryStats("INIT");
@@ -252,11 +271,32 @@ public class Trainer implements AutoCloseable {
             );
             float valLoss = evaluate();
 
-            System.out.printf(
-                "[EPOCH %d] Results: train=%.4f, val=%.4f, time=%.1fs%n",
+            // Calculate learning rate for logging
+            int t = globalStep + 1;
+            float warmup = Math.min(
+                1f,
+                (float) t / Math.max(cfg.warmupSteps, 1)
+            );
+            float biasCorr = (float) (Math.sqrt(1.0 - Math.pow(BETA2, t)) /
+                (1.0 - Math.pow(BETA1, t)));
+            float lrT = cfg.learningRate * warmup * biasCorr;
+
+            // WRITE TO CSV - THIS IS THE KEY ADDITION
+            csvWriter.printf(
+                "%d,%.6f,%.6f,%.8f%n",
                 epoch,
                 trainLoss,
                 valLoss,
+                lrT
+            );
+            csvWriter.flush();
+
+            System.out.printf(
+                "[EPOCH %d] Results: train=%.4f, val=%.4f, lr=%.6f, time=%.1fs%n",
+                epoch,
+                trainLoss,
+                valLoss,
+                lrT,
                 epochTime / 1000.0
             );
             printMemoryStats("EPOCH_END");
@@ -304,6 +344,24 @@ public class Trainer implements AutoCloseable {
             System.gc();
             printMemoryStats("POST_GC");
         }
+
+        // Generate final chart after all epochs complete
+        try {
+            System.out.println("[CHART] Generating training chart...");
+            TrainingChart.generate(
+                csvPath.toString(),
+                Paths.get(cfg.checkpointDir, "training_chart").toString()
+            );
+        } catch (Exception e) {
+            System.err.println(
+                "[CHART] Failed to generate chart: " + e.getMessage()
+            );
+        }
+
+        System.out.printf(
+            "%n[TRAIN] Training complete! Log saved to: %s%n",
+            csvPath
+        );
     }
 
     private float trainStep(int offset) {
