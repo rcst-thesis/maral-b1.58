@@ -1,7 +1,7 @@
 install:
     mvn clean install -Dmaven.test.skip
 
-dev:
+train:
     mvn clean compile exec:java
 
 test:
@@ -9,3 +9,5 @@ test:
 
 tokenize:
     python scripts/train_spm.py
+
+ci: test train

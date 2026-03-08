@@ -13,33 +13,40 @@ tokenizer:
 
 # ── Architecture ──────────────────────────────────────────────────────────────
 architecture:
-  d_model: 512 # embedding dimension
-  n_heads: 8 # attention heads (d_model must be divisible by n_heads)
-  n_encoder_layers: 6 # BitEncoderBlock stack depth
-  n_decoder_layers: 6 # BitDecoderBlock stack depth
-  d_ffn: 1344 # FFN hidden dim (≈ 2.625 × d_model, ReLU² friendly)
-  max_seq_len: 256 # maximum source/target token length
-  dropout: 0.0 # BitNet b1.58 trains without dropout
-  eps: 1.0e-6 # RMSNorm epsilon
-  rope_base: 10000 # RoPE base frequency θ
+  d_model: 128 # reduced from 512 — fits in RAM with Adam state
+  n_heads: 4 # reduced from 8   — d_model / n_heads = 32
+  n_encoder_layers: 2 # reduced from 6
+  n_decoder_layers: 2 # reduced from 6
+  d_ffn: 336 # 2.625 * d_model
+  max_seq_len: 32 # reduced from 256
+  dropout: 0.0
+  eps: 1.0e-6
+  rope_base: 10000
 
 # ── BitLinear quantization ────────────────────────────────────────────────────
 quantization:
-  weight_bits: 1.58 # ternary {-1, 0, +1}
-  activation_bits: 8 # per-token absmax quantization
-  eps: 1.0e-8 # absmean epsilon (weight quant denominator guard)
+  weight_bits: 1.58
+  activation_bits: 8
+  eps: 1.0e-8
 
 # ── Training ──────────────────────────────────────────────────────────────────
 training:
-  batch_size: 32
-  block_size: 256 # matches max_seq_len
+  batch_size: 1
+  block_size: 32 # matches max_seq_len
   train_ratio: 0.9
   seed: 42
-  max_epochs: 50
+  max_epochs: 30
   learning_rate: 3.0e-4
   weight_decay: 0.1
-  warmup_steps: 1000
+  warmup_steps: 100
   grad_clip: 1.0
+
+# ── Checkpointing ─────────────────────────────────────────────────────────────
+checkpoint:
+  dir: checkpoints # relative to project root
+  save_every_n_epochs: 1 # save after every N epochs (1 = every epoch)
+  keep_last_n: 3 # delete older checkpoints, keep only the N most recent
+  resume_from: "" # set to "checkpoints/epoch-005" to resume; empty = train from scratch
 
 # ── Data ──────────────────────────────────────────────────────────────────────
 data:

@@ -11,6 +11,12 @@
   <name>maral-b1.58</name>
   <url>http://maven.apache.org</url>
 
+
+  <properties>
+    <maven.compiler.release>25</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
   <dependencies>
     <!-- Source: https://mvnrepository.com/artifact/io.github.eix128/sentencepiece4j -->
     <dependency>
@@ -62,13 +68,25 @@
 
   <build>
     <plugins>
+    <plugin>
+       <groupId>org.apache.maven.plugins</groupId>
+       <artifactId>maven-compiler-plugin</artifactId>
+       <version>3.13.0</version>
+       <configuration>
+         <release>25</release>
+       </configuration>
+     </plugin>
+
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>exec-maven-plugin</artifactId>
         <version>3.6.3</version>
         <configuration>
           <!-- Entry point -->
-          <mainClass>com.rcst.App</mainClass>
+          <mainClass>com.rcst.Trainer</mainClass>
+          <arguments />
+            <!-- 80% of system RAM as JVM heap -->
+            <commandlineArgs>-Xmx7372m</commandlineArgs>
         </configuration>
       </plugin>
     </plugins>

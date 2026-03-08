@@ -15,24 +15,29 @@ import ai.djl.util.PairList;
  * Replaces nn.Linear for all projection layers in the transformer.
  * No bias term (consistent with BitNet b1.58 spec).
  *
- * Forward pass (Ma et al. 2024, "The Era of 1-bit LLMs"):
- *
+ * Forward pass (Ma et al. 2024):
  *   1. Weight quantization (absmean):
  *        γ   = mean(|W|)
  *        W̃   = RoundClip(W / (γ + ε), -1, 1)   ∈ {-1, 0, +1}
- *
  *   2. Activation quantization (absmax per-token, 8-bit):
  *        η_i = max(|x_i|)  for each token row i
  *        x̃_i = Clip(x_i · (127 / η_i), -128, 127)
- *
  *   3. Linear projection:
  *        y = x̃ @ W̃ᵀ
- *
  *   4. De-quantize:
  *        y_out = y · (γ · η_i / 127)   per token row
  *
- * Gradient uses the Straight-Through Estimator (STE): quantization is
- * treated as identity during the backward pass by DJL autograd.
+ * ── Memory fix (DJL issue #2210) ──────────────────────────────────────
+ * `parameterStore.getValue(weight, ...)` returns an NDArray owned by the
+ * long-lived model manager. Every computation derived from that array
+ * (w.abs(), w.div(), etc.) is also attached to the model manager and is
+ * NEVER freed by the per-step sub-manager, causing VRAM to grow each epoch.
+ *
+ * Fix: inside forwardInternal, duplicate `w` into a short-lived scope
+ * manager (`wScope`) so all weight-derived intermediates are freed at the
+ * end of the forward pass. The final result `yOut` is re-attached to the
+ * input's manager before the scope closes so it remains valid for the
+ * caller.
  *
  * Input  shape: (..., inFeatures)
  * Output shape: (..., outFeatures)
@@ -65,44 +70,6 @@ public class BitLinear extends AbstractBlock {
         );
     }
 
-    /**
-     * Weight quantization (absmean)
-     *
-     * W̃ = RoundClip(W / (γ + ε), -1, 1)
-     * Returns a ternary {-1, 0, +1} matrix; γ returned via wScale[0].
-     */
-    private NDArray ternarize(NDArray w, float[] wScale) {
-        NDArray gamma = w.abs().mean(); // scalar γ
-        wScale[0] = gamma.getFloat();
-        NDArray wTilde = w
-            .div(gamma.add(eps)) // W / (γ + ε)
-            .round() // nearest int
-            .clip(-1, 1); // clamp → {-1,0,+1}
-        return wTilde;
-    }
-
-    /**
-     * Activation quantization (absmax per-token, 8-bit)
-     * x̃_i = Clip(round(x_i · 127 / η_i), -128, 127)
-     * η_i  = max(|x_i|) for each token row.
-     * Returns quantized activations; per-token η values returned via etaOut.
-     */
-    private NDArray quantizeActivations(NDArray x, NDArray[] etaOut) {
-        // x shape: [*, inFeatures] — treat all leading dims as tokens
-        int lastDim = (int) x.getShape().get(x.getShape().dimension() - 1);
-        long tokens = x.getShape().size() / lastDim;
-
-        NDArray xFlat = x.reshape(tokens, lastDim); // [T, inFeatures]
-        NDArray absX = xFlat.abs();
-        NDArray eta = absX.max(new int[] { 1 }, true); // [T, 1] per-token max
-        etaOut[0] = eta;
-
-        NDArray xScaled = xFlat.mul(127f).div(eta.add(eps));
-        NDArray xQ = xScaled.round().clip(-128, 127); // [T, inFeatures]
-        return xQ;
-    }
-
-    // Forward
     @Override
     protected NDList forwardInternal(
         ParameterStore parameterStore,
@@ -111,30 +78,55 @@ public class BitLinear extends AbstractBlock {
         PairList<String, Object> params
     ) {
         NDArray x = inputs.singletonOrThrow();
-        NDManager mgr = x.getManager();
+        NDManager mgr = x.getManager(); // step sub-manager — correct device + lifetime
+
+        // `w` is owned by the long-lived model manager.
         NDArray w = parameterStore.getValue(weight, mgr.getDevice(), training);
 
-        // Quantize weights → W̃  (ternary {-1, 0, +1})
-        float[] wScale = new float[1];
-        NDArray wTilde = ternarize(w, wScale); // [outFeatures, inFeatures]
+        // ── Open a scope so every w-derived intermediate is freed here ─────
+        // yOut is re-attached to mgr before the scope closes.
+        NDArray yOut;
+        try (NDManager wScope = mgr.newSubManager()) {
+            // Duplicate w into wScope — all subsequent ops on wCopy live here
+            NDArray wCopy = w.duplicate();
+            wCopy.attach(wScope);
 
-        // Quantize activations → x̃  (8-bit per token)
-        NDArray[] etaOut = new NDArray[1];
-        NDArray xQ = quantizeActivations(x, etaOut); // [T, inFeatures]
-        NDArray eta = etaOut[0]; // [T, 1]
+            // ── 1. Weight quantization (absmean) ──────────────────────────
+            NDArray gamma = wCopy.abs().mean(); // scalar γ
+            float gScale = gamma.getFloat();
+            NDArray wTilde = wCopy
+                .div(gamma.add(eps)) // W / (γ + ε)
+                .round() // nearest int
+                .clip(-1, 1); // {-1, 0, +1}
 
-        // y = x̃ @ W̃ᵀ  → [T, outFeatures]
-        NDArray y = xQ.matMul(wTilde.transpose());
+            // ── 2. Activation quantization (absmax per-token, 8-bit) ───────
+            int lastDim = (int) x.getShape().get(x.getShape().dimension() - 1);
+            long tokens = x.getShape().size() / lastDim;
 
-        // De-quantize: y_out = y · (γ · η / 127)  per token
-        NDArray deqScale = eta.mul(wScale[0]).div(127f); // [T, 1]
-        NDArray yOut = y.mul(deqScale); // broadcast over outFeatures
+            NDArray xFlat = x.reshape(tokens, lastDim); // [T, in]
+            NDArray eta = xFlat.abs().max(new int[] { 1 }, true); // [T, 1]
+            NDArray xQ = xFlat
+                .mul(127f)
+                .div(eta.add(eps))
+                .round()
+                .clip(-128, 127); // [T, in]
 
-        // Restore original leading shape: (..., outFeatures)
-        long[] inShape = x.getShape().getShape();
-        long[] outShape = inShape.clone();
-        outShape[outShape.length - 1] = outFeatures;
-        yOut = yOut.reshape(outShape);
+            // ── 3. Linear projection ───────────────────────────────────────
+            NDArray y = xQ.matMul(wTilde.transpose()); // [T, out]
+
+            // ── 4. De-quantize ─────────────────────────────────────────────
+            NDArray deqScale = eta.mul(gScale).div(127f); // [T, 1]
+            NDArray yFlat = y.mul(deqScale); // [T, out]
+
+            // Restore leading shape: (..., outFeatures)
+            long[] inShape = x.getShape().getShape();
+            long[] outShape = inShape.clone();
+            outShape[outShape.length - 1] = outFeatures;
+            yOut = yFlat.reshape(outShape);
+
+            // Move result out of wScope before it closes
+            yOut.attach(mgr);
+        } // wScope closes → wCopy, gamma, wTilde, eta, xQ, y, deqScale freed
 
         return new NDList(yOut);
     }

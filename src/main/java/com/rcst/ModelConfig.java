@@ -18,7 +18,7 @@ import org.yaml.snakeyaml.Yaml;
  */
 public final class ModelConfig {
 
-    // Tokenizer
+    // ── Tokenizer ─────────────────────────────────────────────────────────────
     public final String tokenizerModelPath;
     public final int vocabSize;
     public final int padId;
@@ -26,7 +26,7 @@ public final class ModelConfig {
     public final int bosId;
     public final int eosId;
 
-    // Architecture
+    // ── Architecture ──────────────────────────────────────────────────────────
     public final int dModel;
     public final int nHeads;
     public final int nEncoderLayers;
@@ -37,10 +37,10 @@ public final class ModelConfig {
     public final float eps;
     public final int ropeBase;
 
-    // Quantization
+    // ── Quantization ──────────────────────────────────────────────────────────
     public final float quantEps;
 
-    // Training
+    // ── Training ──────────────────────────────────────────────────────────────
     public final int batchSize;
     public final int blockSize;
     public final double trainRatio;
@@ -51,20 +51,32 @@ public final class ModelConfig {
     public final int warmupSteps;
     public final float gradClip;
 
-    // Data
+    // ── Checkpoint ────────────────────────────────────────────────────────────
+    /** Root directory where epoch sub-folders are written. */
+    public final String checkpointDir;
+    /** Write a checkpoint every N epochs (1 = every epoch). */
+    public final int saveEveryNEpochs;
+    /** Keep only the N most recent checkpoints; older ones are deleted. */
+    public final int keepLastN;
+    /**
+     * If non-empty, resume training from this checkpoint directory
+     * (e.g. "checkpoints/epoch-005").  Empty string means start fresh.
+     */
+    public final String resumeFrom;
+
+    // ── Data ──────────────────────────────────────────────────────────────────
     public final String corpusPath;
     public final String parallelPath;
     public final String sourceLang;
     public final String targetLang;
 
-    // Singleton
+    // ── Singleton ─────────────────────────────────────────────────────────────
 
     private static final String DEFAULT_PATH =
         "src/main/resources/model-config.yaml";
 
     private static volatile ModelConfig instance;
 
-    /** Returns the singleton, loading from the default path on first call. */
     public static ModelConfig get() {
         if (instance == null) {
             synchronized (ModelConfig.class) {
@@ -84,14 +96,13 @@ public final class ModelConfig {
         return instance;
     }
 
-    /** Load from an explicit path — call this in tests before ModelConfig.get(). */
     public static ModelConfig load(Path path) throws IOException {
         try (InputStream is = Files.newInputStream(path)) {
             return new ModelConfig(new Yaml().load(is));
         }
     }
 
-    // Constructor
+    // ── Constructor ───────────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
     private ModelConfig(Map<String, Object> root) {
@@ -103,6 +114,7 @@ public final class ModelConfig {
             "quantization"
         );
         Map<String, Object> train = (Map<String, Object>) root.get("training");
+        Map<String, Object> ckpt = (Map<String, Object>) root.get("checkpoint");
         Map<String, Object> data = (Map<String, Object>) root.get("data");
 
         tokenizerModelPath = (String) tok.get("model_path");
@@ -134,6 +146,12 @@ public final class ModelConfig {
         warmupSteps = (int) train.get("warmup_steps");
         gradClip = ((Number) train.get("grad_clip")).floatValue();
 
+        checkpointDir = (String) ckpt.get("dir");
+        saveEveryNEpochs = (int) ckpt.get("save_every_n_epochs");
+        keepLastN = (int) ckpt.get("keep_last_n");
+        String rf = (String) ckpt.get("resume_from");
+        resumeFrom = (rf == null) ? "" : rf.trim();
+
         corpusPath = (String) data.get("corpus");
         parallelPath = (String) data.get("parallel");
         sourceLang = (String) data.get("source_lang");
@@ -144,13 +162,14 @@ public final class ModelConfig {
     public String toString() {
         return String.format(
             "ModelConfig{name=maral-b1.58-125m, vocab=%d, dModel=%d, " +
-                "nHeads=%d, enc=%d, dec=%d, maxSeq=%d}",
+                "nHeads=%d, enc=%d, dec=%d, maxSeq=%d, ckptDir=%s}",
             vocabSize,
             dModel,
             nHeads,
             nEncoderLayers,
             nDecoderLayers,
-            maxSeqLen
+            maxSeqLen,
+            checkpointDir
         );
     }
 }
