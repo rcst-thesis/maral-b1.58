@@ -9,14 +9,12 @@ import ai.djl.ndarray.types.DataType;
 import ai.djl.nn.Parameter;
 import ai.djl.training.GradientCollector;
 import ai.djl.training.ParameterStore;
-import ai.djl.util.cuda.CudaUtils;
 import com.rcst.utils.ModelConfig;
 import com.sentencepiece.Scoring;
 import com.sentencepiece.SentencePieceAlgorithm;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
-import java.lang.management.MemoryUsage; // ADD THIS IMPORT
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -31,7 +29,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Training loop for maral-b1.58 with comprehensive debugging.
+ * Training loop for maral-b1.58 - CPU VERSION.
  */
 public class Trainer implements AutoCloseable {
 
@@ -59,22 +57,21 @@ public class Trainer implements AutoCloseable {
 
     public Trainer() throws Exception {
         this.cfg = ModelConfig.get();
-        this.model = new Model();
-        this.manager = model.getManager();
 
-        Device device = manager.getDevice();
-        long mem = CudaUtils.getGpuMemory(device).getMax();
-        System.out.printf(
-            "Device: %s  GPU memory: %d MB%n",
-            device,
-            mem / (1024 * 1024)
-        );
+        // FORCE CPU: Create manager with CPU device
+        this.manager = NDManager.newBaseManager(Device.cpu());
+
+        System.out.println("[INIT] Using CPU for training");
+        printMemoryStats("INIT");
 
         // Load SPM for data loading
         this.spm = com.sentencepiece.Model.parseFrom(
             Paths.get(cfg.tokenizerModelPath)
         );
         this.spmAlgo = new SentencePieceAlgorithm(true, Scoring.HIGHEST_SCORE);
+
+        // Initialize model with CPU manager
+        this.model = new Model(manager);
 
         // Load data
         loadData();
@@ -305,7 +302,6 @@ public class Trainer implements AutoCloseable {
                 epoch
             );
             System.gc();
-            clearGpuCache();
             printMemoryStats("POST_GC");
         }
     }
@@ -483,41 +479,18 @@ public class Trainer implements AutoCloseable {
     }
 
     private void printMemoryStats(String label) {
-        try {
-            Device device = manager.getDevice();
-            if (device.isGpu()) {
-                MemoryUsage mem = CudaUtils.getGpuMemory(device); // Uses java.lang.management.MemoryUsage
-                long total = mem.getMax();
-                long used = mem.getCommitted();
-                long free = total - used;
-                float pct = (100f * used) / total;
-                System.out.printf(
-                    "[MEM %s] GPU: used=%.2f MiB / %.2f MiB (%.1f%%), free=%.2f MiB%n",
-                    label,
-                    used / 1048576.0,
-                    total / 1048576.0,
-                    pct,
-                    free / 1048576.0
-                );
-            } else {
-                Runtime rt = Runtime.getRuntime();
-                long total = rt.totalMemory();
-                long free = rt.freeMemory();
-                long used = total - free;
-                System.out.printf(
-                    "[MEM %s] JVM: used=%.2f MiB / %.2f MiB%n",
-                    label,
-                    used / 1048576.0,
-                    total / 1048576.0
-                );
-            }
-        } catch (Exception e) {
-            System.out.printf(
-                "[MEM %s] Error reading memory: %s%n",
-                label,
-                e.getMessage()
-            );
-        }
+        Runtime rt = Runtime.getRuntime();
+        long total = rt.totalMemory();
+        long free = rt.freeMemory();
+        long used = total - free;
+        long max = rt.maxMemory();
+        System.out.printf(
+            "[MEM %s] JVM: used=%.2f MiB / %.2f MiB (max=%.2f MiB)%n",
+            label,
+            used / 1048576.0,
+            total / 1048576.0,
+            max / 1048576.0
+        );
     }
 
     private void saveRollingCheckpoint(
@@ -618,6 +591,7 @@ public class Trainer implements AutoCloseable {
         int totalCores = Runtime.getRuntime().availableProcessors();
         int usableCores = Math.max(1, (int) (totalCores * 0.8));
 
+        // CPU settings
         System.setProperty(
             "ai.djl.pytorch.num_interop_threads",
             String.valueOf(usableCores)
@@ -626,14 +600,10 @@ public class Trainer implements AutoCloseable {
             "ai.djl.pytorch.num_threads",
             String.valueOf(usableCores)
         );
-        System.setProperty(
-            "PYTORCH_CUDA_ALLOC_CONF",
-            "expandable_segments:True"
-        );
 
         long totalRam = Runtime.getRuntime().maxMemory();
         System.out.printf(
-            "[MAIN] Cores: %d / %d, JVM heap: %.1f GiB%n",
+            "[MAIN] CPU Training - Cores: %d / %d, JVM heap: %.1f GiB%n",
             usableCores,
             totalCores,
             totalRam / 1073741824.0
@@ -643,21 +613,6 @@ public class Trainer implements AutoCloseable {
             trainer.train();
         }
         System.out.println("[MAIN] Training complete");
-    }
-
-    private void clearGpuCache() {
-        try {
-            // Try to access PyTorch engine's emptyCache method via reflection
-            Class<?> ptEngineClass = Class.forName(
-                "ai.djl.pytorch.engine.PtEngine"
-            );
-            Object engine = ptEngineClass.getMethod("getInstance").invoke(null);
-            ptEngineClass.getMethod("emptyCache").invoke(engine);
-            System.out.println("  [CACHE] PyTorch cache cleared");
-        } catch (Exception e) {
-            // Fallback: force System.gc and hope for the best
-            System.gc();
-        }
     }
 
     @Override

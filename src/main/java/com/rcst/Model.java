@@ -48,8 +48,12 @@ public class Model extends AbstractBlock implements AutoCloseable {
     private final SentencePieceAlgorithm spmAlgo;
 
     public Model() throws IOException {
+        this(NDManager.newBaseManager());
+    }
+
+    public Model(NDManager manager) throws IOException {
         this.cfg = ModelConfig.get();
-        this.manager = NDManager.newBaseManager();
+        this.manager = manager;
 
         // Load SPM for inference
         this.spm = com.sentencepiece.Model.parseFrom(
