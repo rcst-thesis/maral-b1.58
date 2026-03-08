@@ -1,5 +1,6 @@
 package com.rcst;
 
+import ai.djl.Device;
 import ai.djl.MalformedModelException;
 import ai.djl.Model;
 import ai.djl.engine.Engine;
@@ -12,25 +13,23 @@ import ai.djl.nn.AbstractBlock;
 import ai.djl.nn.Parameter;
 import ai.djl.training.GradientCollector;
 import ai.djl.training.ParameterStore;
+import ai.djl.util.cuda.CudaUtils;
 import com.rcst.layers.BitDecoder;
 import com.rcst.layers.BitEncoder;
 import com.rcst.layers.BitLinear;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.lang.management.MemoryUsage;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
-import java.util.stream.Stream;
 
 /**
  * Training loop for maral-b1.58.
@@ -97,16 +96,18 @@ public class Trainer {
     // Best checkpoint tracking — updated whenever val loss improves
     private float bestValLoss = Float.MAX_VALUE;
 
-    // Rolling queue for epoch-NNN eviction
-    private final Deque<Path> checkpointQueue = new ArrayDeque<>();
-
     // ── Construction ──────────────────────────────────────────────────────────
 
     public Trainer() throws Exception {
         this.cfg = ModelConfig.get();
         this.manager = NDManager.newBaseManager();
-        System.out.printf("Device: %s%n", manager.getDevice());
+
+        Device device = manager.getDevice();
+        MemoryUsage mem = CudaUtils.getGpuMemory(device);
         this.tokenizer = new Tokenizer();
+
+        System.out.printf("GPU memory: %d MB%n", mem.getMax() / (1024 * 1024));
+        System.out.printf("Device: %s%n", device);
 
         Shape embedInput = new Shape(cfg.batchSize, cfg.maxSeqLen);
         Shape seqShape = new Shape(cfg.batchSize, cfg.maxSeqLen, cfg.dModel);
@@ -202,20 +203,9 @@ public class Trainer {
                 }
             }
 
-            // Validation — every 5 epochs and on epoch 1
-            float valLoss = 0f;
-            if (epoch % 5 == 0 || epoch == 1) {
-                valLoss = evaluate(valSet);
-                lastValLoss = valLoss;
-
-                // ── Best checkpoint ───────────────────────────────────────
-                // Save whenever val loss improves (valLoss > 0 guards epochs
-                // where evaluate() wasn't called and returned 0).
-                if (valLoss > 0f && valLoss < bestValLoss) {
-                    bestValLoss = valLoss;
-                    saveBestCheckpoint(epoch, totalLoss / nBatches, valLoss);
-                }
-            }
+            // Validation
+            float valLoss = evaluate(valSet);
+            lastValLoss = valLoss;
 
             System.out.printf(
                 "epoch %3d  train=%.4f  val=%.4f%n",
@@ -224,10 +214,7 @@ public class Trainer {
                 valLoss
             );
 
-            // ── Rolling epoch checkpoint ──────────────────────────────────
-            if (epoch % cfg.saveEveryNEpochs == 0) {
-                saveEpochCheckpoint(epoch, totalLoss / nBatches, valLoss);
-            }
+            saveEpochCheckpoint(epoch, totalLoss / nBatches, valLoss);
 
             // Nudge GC — reduces allocator fragmentation between epochs
             System.gc();
@@ -308,46 +295,6 @@ public class Trainer {
             .singletonOrThrow();
     }
 
-    // ── Best checkpoint ───────────────────────────────────────────────────────
-
-    /**
-     * Saves the best model so far to checkpoints/best/.
-     * This directory is NEVER evicted by rolling cleanup — it is the
-     * checkpoint intended for inference.
-     *
-     * training-state.txt additionally records "bestEpoch" so you know
-     * which epoch produced it.
-     */
-    private void saveBestCheckpoint(int epoch, float trainLoss, float valLoss)
-        throws IOException {
-        Path bestPath = Paths.get(cfg.checkpointDir, "best");
-        Files.createDirectories(bestPath);
-
-        saveBlock(srcEmbed, bestPath, "src-embed");
-        saveBlock(tgtEmbed, bestPath, "tgt-embed");
-        saveBlock(encoder, bestPath, "encoder");
-        saveBlock(decoder, bestPath, "decoder");
-        saveBlock(outProj, bestPath, "out-proj");
-
-        Path statePath = bestPath.resolve("training-state.txt");
-        try (BufferedWriter w = Files.newBufferedWriter(statePath)) {
-            w.write("bestEpoch=" + epoch);
-            w.newLine();
-            w.write("globalStep=" + globalStep);
-            w.newLine();
-            w.write("trainLoss=" + trainLoss);
-            w.newLine();
-            w.write("valLoss=" + valLoss);
-            w.newLine();
-        }
-
-        System.out.printf(
-            "  ★ best checkpoint saved → %s  (val=%.4f)%n",
-            bestPath,
-            valLoss
-        );
-    }
-
     // ── Rolling epoch checkpoint ──────────────────────────────────────────────
 
     /**
@@ -377,15 +324,6 @@ public class Trainer {
             w.write("valLoss=" + valLoss);
             w.newLine();
         }
-
-        System.out.printf("  ✓ checkpoint saved → %s%n", ckptPath);
-
-        checkpointQueue.addLast(ckptPath);
-        while (checkpointQueue.size() > cfg.keepLastN) {
-            Path old = checkpointQueue.removeFirst();
-            deleteDirectory(old);
-            System.out.printf("  ✗ evicted old checkpoint: %s%n", old);
-        }
     }
 
     /** Use DJL Model.save() to write a single block's .params file. */
@@ -399,12 +337,6 @@ public class Trainer {
 
     // ── Checkpoint load / resume ──────────────────────────────────────────────
 
-    /**
-     * Loads all five components from a checkpoint directory and restores
-     * globalStep / startEpoch from training-state.txt.
-     *
-     * Works for both "checkpoints/best" and "checkpoints/epoch-NNN".
-     */
     private void loadCheckpoint(Path ckptPath)
         throws IOException, MalformedModelException {
         System.out.printf("Resuming from checkpoint: %s%n", ckptPath);
@@ -632,28 +564,12 @@ public class Trainer {
         return pairs;
     }
 
-    /**
-     * Recursively delete a checkpoint directory.
-     * Uses explicit Stream<Path> — no var, Java 17 safe.
-     */
-    private static void deleteDirectory(Path dir) throws IOException {
-        if (!Files.exists(dir)) return;
-        try (Stream<Path> stream = Files.walk(dir)) {
-            stream
-                .sorted(Comparator.reverseOrder())
-                .forEach(p -> {
-                    try {
-                        Files.delete(p);
-                    } catch (IOException ignored) {}
-                });
-        }
-    }
-
     // ── Main ──────────────────────────────────────────────────────────────────
 
     public static void main(String[] args) throws Exception {
         int totalCores = Runtime.getRuntime().availableProcessors();
         int usableCores = Math.max(1, (int) (totalCores * 0.8));
+
         System.setProperty(
             "ai.djl.pytorch.num_interop_threads",
             String.valueOf(usableCores)

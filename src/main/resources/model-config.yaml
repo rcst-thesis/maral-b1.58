@@ -35,7 +35,7 @@ training:
   block_size: 32 # matches max_seq_len
   train_ratio: 0.9
   seed: 42
-  max_epochs: 60
+  max_epochs: 30
   learning_rate: 3.0e-4
   weight_decay: 0.1
   warmup_steps: 100
@@ -45,7 +45,7 @@ training:
 checkpoint:
   dir: checkpoints # relative to project root
   save_every_n_epochs: 1 # save after every N epochs (1 = every epoch)
-  keep_last_n: 3 # delete older checkpoints, keep only the N most recent
+  keep_last_n: 5 # delete older checkpoints, keep only the N most recent
   resume_from: "" # set to "checkpoints/epoch-005" to resume; empty = train from scratch
 
 # ── Data ──────────────────────────────────────────────────────────────────────

@@ -29,3 +29,6 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# AI slop
+checkpoints

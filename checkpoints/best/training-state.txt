@@ -1,4 +1,0 @@
-bestEpoch=30
-globalStep=270
-trainLoss=9.279942
-valLoss=9.037121
