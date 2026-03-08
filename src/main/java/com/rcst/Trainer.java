@@ -16,6 +16,7 @@ import com.sentencepiece.SentencePieceAlgorithm;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.lang.management.MemoryUsage; // ADD THIS IMPORT
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -30,15 +31,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Training loop for maral-b1.58.
- *
- * Responsibilities:
- * - Data loading and batching
- * - Optimization (AdamW with gradient clipping)
- * - Training loop and evaluation
- * - Checkpoint management (model weights + training state)
- *
- * Model architecture is delegated to {@link Model}.
+ * Training loop for maral-b1.58 with comprehensive debugging.
  */
 public class Trainer implements AutoCloseable {
 
@@ -52,7 +45,7 @@ public class Trainer implements AutoCloseable {
     private final Model model;
     private final NDManager manager;
 
-    // SPM for data loading (tokenizing parallel corpus)
+    // SPM for data loading
     private final com.sentencepiece.Model spm;
     private final SentencePieceAlgorithm spmAlgo;
 
@@ -87,7 +80,10 @@ public class Trainer implements AutoCloseable {
         loadData();
 
         // Initialize optimizer state
-        for (Parameter p : model.getParameters()) {
+        System.out.println("[INIT] Initializing Adam state tensors...");
+        int paramCount = 0;
+        long totalParams = 0;
+        for (Parameter p : model.getParameterList()) {
             NDArray arr = p.getArray();
             arr.setRequiresGradient(true);
             String key = Integer.toString(System.identityHashCode(p));
@@ -98,11 +94,23 @@ public class Trainer implements AutoCloseable {
                     manager.zeros(arr.getShape(), DataType.FLOAT32),
                 }
             );
+            long size = arr.getShape().size();
+            totalParams += size;
+            paramCount++;
+            System.out.printf(
+                "[INIT] Param %d: shape=%s, size=%d%n",
+                paramCount,
+                arr.getShape(),
+                size
+            );
         }
+
         System.out.printf(
-            "Parameters: %d tensors%n",
-            model.getParameters().size()
+            "[INIT] Total parameters: %d tensors, %,d elements%n",
+            paramCount,
+            totalParams
         );
+        printMemoryStats("POST_INIT");
 
         // Resume if specified
         if (!cfg.resumeFrom.isEmpty()) {
@@ -111,6 +119,7 @@ public class Trainer implements AutoCloseable {
     }
 
     private void loadData() throws IOException {
+        System.out.println("[DATA] Loading parallel corpus...");
         List<long[][]> all = new ArrayList<>();
         try (
             BufferedReader br = Files.newBufferedReader(
@@ -118,6 +127,7 @@ public class Trainer implements AutoCloseable {
             )
         ) {
             String line;
+            int lines = 0;
             while ((line = br.readLine()) != null) {
                 String[] cols = line.split("\t", 2);
                 if (cols.length < 2) continue;
@@ -136,6 +146,10 @@ public class Trainer implements AutoCloseable {
                         tgt.stream().mapToLong(Integer::longValue).toArray(),
                     }
                 );
+                lines++;
+                if (lines % 1000 == 0) {
+                    System.out.printf("[DATA] Loaded %d lines...%n", lines);
+                }
             }
         }
 
@@ -148,7 +162,7 @@ public class Trainer implements AutoCloseable {
         valSet.addAll(all.subList(nTrain, all.size()));
 
         System.out.printf(
-            "Loaded %d sentence pairs (train=%d, val=%d)%n",
+            "[DATA] Dataset: total=%d, train=%d, val=%d%n",
             all.size(),
             trainSet.size(),
             valSet.size()
@@ -157,13 +171,18 @@ public class Trainer implements AutoCloseable {
 
     public void train() throws Exception {
         System.out.printf(
-            "Training: epochs=%d, startEpoch=%d%n",
+            "[TRAIN] Starting training: epochs=%d, startEpoch=%d, batchSize=%d, gradAccum=%d%n",
             cfg.maxEpochs,
-            startEpoch
+            startEpoch,
+            cfg.batchSize,
+            cfg.gradAccumSteps
         );
         Random rng = new Random(cfg.seed);
 
         for (int epoch = startEpoch; epoch <= cfg.maxEpochs; epoch++) {
+            System.out.printf("%n[EPOCH %d] Starting epoch...%n", epoch);
+            printMemoryStats("EPOCH_START");
+
             Collections.shuffle(trainSet, rng);
 
             float totalLoss = 0f;
@@ -172,45 +191,95 @@ public class Trainer implements AutoCloseable {
                 1,
                 (int) Math.ceil((double) trainSet.size() / cfg.batchSize)
             );
+            System.out.printf("[EPOCH %d] Steps per epoch: %d%n", epoch, steps);
 
             zeroGradients();
 
+            long epochStartTime = System.currentTimeMillis();
+
             for (int i = 0; i < steps; i++) {
-                totalLoss += trainStep(i * cfg.batchSize);
+                long stepStartTime = System.currentTimeMillis();
+
+                if (i % 10 == 0) {
+                    System.out.printf(
+                        "[EPOCH %d] Step %d/%d (%.1f%%)...%n",
+                        epoch,
+                        i,
+                        steps,
+                        (100.0 * i) / steps
+                    );
+                    printMemoryStats("STEP_" + i);
+                }
+
+                float loss = trainStep(i * cfg.batchSize);
+                totalLoss += loss;
                 nBatches++;
                 globalStep++;
 
+                long stepTime = System.currentTimeMillis() - stepStartTime;
+
+                if (i % 10 == 0) {
+                    System.out.printf(
+                        "[EPOCH %d] Step %d loss=%.4f, time=%dms%n",
+                        epoch,
+                        i,
+                        loss,
+                        stepTime
+                    );
+                }
+
                 if ((i + 1) % cfg.gradAccumSteps == 0 || i == steps - 1) {
+                    System.out.printf(
+                        "[EPOCH %d] Updating weights (step %d)...%n",
+                        epoch,
+                        i
+                    );
+                    long updateStart = System.currentTimeMillis();
                     clipAndUpdate();
+                    long updateTime = System.currentTimeMillis() - updateStart;
+                    System.out.printf(
+                        "[EPOCH %d] Weight update took %dms%n",
+                        epoch,
+                        updateTime
+                    );
                     zeroGradients();
                 }
             }
 
+            long epochTime = System.currentTimeMillis() - epochStartTime;
             float trainLoss = totalLoss / nBatches;
+
+            System.out.printf(
+                "[EPOCH %d] Computing validation loss...%n",
+                epoch
+            );
             float valLoss = evaluate();
 
             System.out.printf(
-                "epoch %3d  train=%.4f  val=%.4f%n",
+                "[EPOCH %d] Results: train=%.4f, val=%.4f, time=%.1fs%n",
                 epoch,
                 trainLoss,
-                valLoss
+                valLoss,
+                epochTime / 1000.0
             );
+            printMemoryStats("EPOCH_END");
 
             if (epoch % cfg.saveEveryNEpochs == 0) {
+                System.out.printf("[EPOCH %d] Saving checkpoint...%n", epoch);
                 saveRollingCheckpoint(epoch, trainLoss, valLoss);
                 evictOldCheckpoints();
             }
 
             if (valLoss < bestValLoss) {
                 bestValLoss = valLoss;
+                System.out.printf(
+                    "[EPOCH %d] New best validation loss! Saving to best/%n",
+                    epoch
+                );
                 saveCheckpoint(
                     Paths.get(cfg.checkpointDir, "best"),
                     epoch,
                     trainLoss,
-                    valLoss
-                );
-                System.out.printf(
-                    "  new best val=%.4f  saved to checkpoints/best%n",
                     valLoss
                 );
             }
@@ -220,21 +289,29 @@ public class Trainer implements AutoCloseable {
                 epoch % cfg.sampleEveryNEpochs == 0
             ) {
                 System.out.printf(
-                    "  sample: %s%n",
-                    model.greedyTranslate(
-                        "Good morning, how are you?",
-                        cfg.maxSeqLen
-                    )
+                    "[EPOCH %d] Generating sample translation...%n",
+                    epoch
                 );
+                String sample = model.greedyTranslate(
+                    "Good morning, how are you?",
+                    cfg.maxSeqLen
+                );
+                System.out.printf("[EPOCH %d] Sample: %s%n", epoch, sample);
             }
 
+            // Force cleanup
+            System.out.printf(
+                "[EPOCH %d] Forcing garbage collection...%n",
+                epoch
+            );
             System.gc();
+            clearGpuCache();
+            printMemoryStats("POST_GC");
         }
     }
 
     private float trainStep(int offset) {
         long[][][] batch = prepareBatch(trainSet, offset);
-        float lossVal;
 
         try (NDManager stepMgr = manager.newSubManager()) {
             NDArray srcIds = stepMgr.create(batch[0]);
@@ -248,11 +325,14 @@ public class Trainer implements AutoCloseable {
             ) {
                 NDArray logits = model.forward(ps, srcIds, tgtIn, true);
                 NDArray loss = crossEntropyLoss(logits, tgtOut);
-                lossVal = loss.getFloat();
+                float lossVal = loss.getFloat();
+
+                loss.setRequiresGradient(true);
                 gc.backward(loss);
+
+                return lossVal;
             }
         }
-        return lossVal;
     }
 
     private float evaluate() {
@@ -300,14 +380,26 @@ public class Trainer implements AutoCloseable {
     }
 
     private void clipAndUpdate() {
+        System.out.println("  [CLIP] Computing gradient norm...");
+        printMemoryStats("CLIP_START");
+
+        // Compute gradient norm
         float totalSq = 0f;
-        for (Parameter p : model.getParameters()) {
+        int gradCount = 0;
+        for (Parameter p : model.getParameterList()) {
             NDArray g = p.getArray().getGradient();
             if (g == null) continue;
-            try (NDArray sq = g.pow(2); NDArray s = sq.sum()) {
-                totalSq += s.getFloat();
+
+            gradCount++;
+            float normSq;
+            try (NDArray sq = g.pow(2)) {
+                try (NDArray sum = sq.sum()) {
+                    normSq = sum.getFloat();
+                }
             }
+            totalSq += normSq;
         }
+        System.out.printf("  [CLIP] Processed %d gradients%n", gradCount);
 
         float norm = (float) Math.sqrt(totalSq) + 1e-6f;
         float scale = (norm > cfg.gradClip) ? cfg.gradClip / norm : 1f;
@@ -318,43 +410,113 @@ public class Trainer implements AutoCloseable {
             (1.0 - Math.pow(BETA1, t)));
         float lrT = cfg.learningRate * warmup * biasCorr;
 
-        for (Parameter p : model.getParameters()) {
+        System.out.printf(
+            "  [CLIP] gradNorm=%.4f, scale=%.4f, lr=%.6f, warmup=%.4f%n",
+            norm,
+            scale,
+            lrT,
+            warmup
+        );
+
+        // Adam update
+        int updateCount = 0;
+        for (Parameter p : model.getParameterList()) {
             NDArray weight = p.getArray();
             NDArray g = weight.getGradient();
             if (g == null) continue;
 
-            if (scale < 1f) g.muli(scale);
+            if (scale < 1f) {
+                g.muli(scale);
+            }
 
             String key = Integer.toString(System.identityHashCode(p));
             NDArray[] mv = adamState.get(key);
             NDArray m = mv[0];
             NDArray v = mv[1];
 
-            try (NDArray gm = g.mul(1f - BETA1)) {
-                m.muli(BETA1).addi(gm);
+            // m = beta1 * m + (1 - beta1) * g
+            m.muli(BETA1);
+            try (NDArray gScaled = g.mul(1f - BETA1)) {
+                m.addi(gScaled);
             }
-            try (NDArray gsq = g.square(); NDArray gv = gsq.mul(1f - BETA2)) {
-                v.muli(BETA2).addi(gv);
-            }
+
+            // v = beta2 * v + (1 - beta2) * g^2
+            v.muli(BETA2);
             try (
-                NDArray decay = weight.mul(
-                    cfg.weightDecay * cfg.learningRate * warmup
-                );
-                NDArray mLr = m.mul(lrT);
-                NDArray vSqrt = v.sqrt();
-                NDArray denom = vSqrt.add(ADAM_EPS);
-                NDArray step = mLr.div(denom)
+                NDArray gSq = g.square();
+                NDArray gSqScaled = gSq.mul(1f - BETA2)
             ) {
-                weight.subi(step).subi(decay);
+                v.addi(gSqScaled);
             }
+
+            // Update weights
+            try (NDArray vSqrt = v.sqrt()) {
+                vSqrt.addi(ADAM_EPS);
+
+                try (NDArray step = m.duplicate()) {
+                    step.muli(lrT);
+                    step.divi(vSqrt);
+                    weight.subi(step);
+                }
+            }
+
+            // Weight decay
+            float decayCoef = cfg.weightDecay * cfg.learningRate * warmup;
+            weight.muli(1f - decayCoef);
+
+            updateCount++;
         }
+
+        System.out.printf("  [CLIP] Updated %d parameters%n", updateCount);
+        printMemoryStats("CLIP_END");
     }
 
     private void zeroGradients() {
-        for (Parameter p : model.getParameters()) {
+        int count = 0;
+        for (Parameter p : model.getParameterList()) {
             NDArray g = p.getArray().getGradient();
             if (g == null) continue;
             g.subi(g);
+            count++;
+        }
+        System.out.printf("  [ZERO] Zeroed %d gradients%n", count);
+    }
+
+    private void printMemoryStats(String label) {
+        try {
+            Device device = manager.getDevice();
+            if (device.isGpu()) {
+                MemoryUsage mem = CudaUtils.getGpuMemory(device); // Uses java.lang.management.MemoryUsage
+                long total = mem.getMax();
+                long used = mem.getCommitted();
+                long free = total - used;
+                float pct = (100f * used) / total;
+                System.out.printf(
+                    "[MEM %s] GPU: used=%.2f MiB / %.2f MiB (%.1f%%), free=%.2f MiB%n",
+                    label,
+                    used / 1048576.0,
+                    total / 1048576.0,
+                    pct,
+                    free / 1048576.0
+                );
+            } else {
+                Runtime rt = Runtime.getRuntime();
+                long total = rt.totalMemory();
+                long free = rt.freeMemory();
+                long used = total - free;
+                System.out.printf(
+                    "[MEM %s] JVM: used=%.2f MiB / %.2f MiB%n",
+                    label,
+                    used / 1048576.0,
+                    total / 1048576.0
+                );
+            }
+        } catch (Exception e) {
+            System.out.printf(
+                "[MEM %s] Error reading memory: %s%n",
+                label,
+                e.getMessage()
+            );
         }
     }
 
@@ -377,6 +539,7 @@ public class Trainer implements AutoCloseable {
         float trainLoss,
         float valLoss
     ) throws IOException {
+        System.out.printf("[SAVE] Saving checkpoint to %s%n", dir);
         model.save(dir);
         try (
             BufferedWriter w = Files.newBufferedWriter(
@@ -392,6 +555,7 @@ public class Trainer implements AutoCloseable {
             w.write("valLoss=" + valLoss);
             w.newLine();
         }
+        System.out.println("[SAVE] Checkpoint saved");
     }
 
     private void evictOldCheckpoints() throws IOException {
@@ -405,6 +569,7 @@ public class Trainer implements AutoCloseable {
 
         while (rolling.size() > cfg.keepLastN) {
             Path oldest = rolling.remove(0);
+            System.out.printf("[CLEANUP] Evicting %s%n", oldest.getFileName());
             try (Stream<Path> stream = Files.walk(oldest)) {
                 stream
                     .sorted(Comparator.reverseOrder())
@@ -414,13 +579,12 @@ public class Trainer implements AutoCloseable {
                         } catch (IOException ignored) {}
                     });
             }
-            System.out.printf("  evicted %s%n", oldest.getFileName());
         }
     }
 
     private void loadCheckpoint(Path ckptPath)
         throws IOException, MalformedModelException {
-        System.out.printf("Resuming from: %s%n", ckptPath);
+        System.out.printf("[RESUME] Loading checkpoint from %s%n", ckptPath);
         model.load(ckptPath);
 
         Path statePath = ckptPath.resolve("training-state.txt");
@@ -442,7 +606,7 @@ public class Trainer implements AutoCloseable {
                 }
             }
             System.out.printf(
-                "  globalStep=%d  nextEpoch=%d  bestValLoss=%.4f%n",
+                "[RESUME] globalStep=%d, nextEpoch=%d, bestValLoss=%.4f%n",
                 globalStep,
                 startEpoch,
                 bestValLoss
@@ -469,7 +633,7 @@ public class Trainer implements AutoCloseable {
 
         long totalRam = Runtime.getRuntime().maxMemory();
         System.out.printf(
-            "Cores: %d / %d  JVM heap: %.1f GiB%n",
+            "[MAIN] Cores: %d / %d, JVM heap: %.1f GiB%n",
             usableCores,
             totalCores,
             totalRam / 1073741824.0
@@ -478,10 +642,27 @@ public class Trainer implements AutoCloseable {
         try (Trainer trainer = new Trainer()) {
             trainer.train();
         }
+        System.out.println("[MAIN] Training complete");
+    }
+
+    private void clearGpuCache() {
+        try {
+            // Try to access PyTorch engine's emptyCache method via reflection
+            Class<?> ptEngineClass = Class.forName(
+                "ai.djl.pytorch.engine.PtEngine"
+            );
+            Object engine = ptEngineClass.getMethod("getInstance").invoke(null);
+            ptEngineClass.getMethod("emptyCache").invoke(engine);
+            System.out.println("  [CACHE] PyTorch cache cleared");
+        } catch (Exception e) {
+            // Fallback: force System.gc and hope for the best
+            System.gc();
+        }
     }
 
     @Override
     public void close() throws Exception {
+        System.out.println("[SHUTDOWN] Closing model...");
         model.close();
     }
 }

@@ -11,11 +11,11 @@ tokenizer:
   eos_id: 3
 
 architecture:
-  d_model: 128
+  d_model: 64
   n_heads: 4
   n_encoder_layers: 2
   n_decoder_layers: 2
-  d_ffn: 336
+  d_ffn: 168
   max_seq_len: 32
   dropout: 0.0
   eps: 1.0e-6

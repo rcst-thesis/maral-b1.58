@@ -13,23 +13,8 @@ import com.rcst.layers.BitLinear;
 /**
  * Multi-Head Attention with BitLinear projections and RoPE.
  *
- * Three modes selected at construction time:
- *   isCross=false, isCausal=false  →  encoder self-attention (bidirectional)
- *   isCross=false, isCausal=true   →  decoder masked self-attention
- *   isCross=true,  isCausal=false  →  decoder cross-attention
- *
- * RoPE is applied to Q and K in self-attention only.
- * Pre-norm (RMSNorm) lives in the enclosing encoder/decoder block.
- *
- * NDList input contract:
- *   self-attention : [x]              or [x, keyPaddingMask]
- *   cross-attention: [x, memory]      or [x, memory, keyPaddingMask]
- *
- *   x              shape: (B, T, dModel)
- *   memory         shape: (B, S, dModel)
- *   keyPaddingMask shape: (B, S)  — 1 at pad positions, 0 elsewhere
- *
- * Output: NDList with single tensor, shape (B, T, dModel).
+ * MEMORY FIX: Don't cache causal mask - recreate each forward pass
+ * to prevent memory accumulation in long training runs.
  */
 public class MultiHeadAttention extends AbstractBlock {
 
@@ -50,19 +35,10 @@ public class MultiHeadAttention extends AbstractBlock {
     // Null for cross-attention; set in initializeChildBlocks
     private RoPE rope;
 
-    // Cached causal mask — rebuilt only when sequence length changes
-    private NDArray cachedMask;
-    private long cachedMaskLen = -1;
+    // REMOVED: Cached causal mask causes memory leak
+    // private NDArray cachedMask;
+    // private long cachedMaskLen = -1;
 
-    /**
-     * @param dModel    model (embedding) dimension
-     * @param nHeads    number of attention heads  (dModel % nHeads == 0)
-     * @param ropeBase  RoPE base frequency (10 000)
-     * @param maxSeqLen maximum sequence length for RoPE table
-     * @param quantEps  epsilon for BitLinear weight quantization
-     * @param isCausal  mask future positions (decoder self-attention)
-     * @param isCross   keys/values come from a second input (cross-attention)
-     */
     public MultiHeadAttention(
         int dModel,
         int nHeads,
@@ -148,10 +124,16 @@ public class MultiHeadAttention extends AbstractBlock {
         float scale = (float) (1.0 / Math.sqrt(headDim));
         NDArray scores = q.matMul(k.transpose(0, 1, 3, 2)).mul(scale);
 
-        if (isCausal) scores = scores.add(causalMask(x.getManager(), T));
-        if (paddingMask != null) scores = scores.add(
-            paddingMask.reshape(B, 1, 1, S).mul(MASK_VAL)
-        );
+        // FIX: Create mask fresh each time - no caching!
+        if (isCausal) {
+            NDArray mask = createCausalMask(x.getManager(), T);
+            scores = scores.add(mask);
+            mask.close(); // Free immediately after use
+        }
+
+        if (paddingMask != null) {
+            scores = scores.add(paddingMask.reshape(B, 1, 1, S).mul(MASK_VAL));
+        }
 
         // Weighted sum → merge heads → (B, T, dModel)
         NDArray out = scores
@@ -181,22 +163,18 @@ public class MultiHeadAttention extends AbstractBlock {
     }
 
     /**
-     * Additive causal mask, shape (1, 1, T, T). Cached per sequence length.
-     * 0 where a query may attend (lower triangle), MASK_VAL elsewhere.
+     * Create causal mask fresh each forward pass.
+     * NO CACHING - prevents memory leak over long training runs.
      */
-    private NDArray causalMask(NDManager mgr, long T) {
-        if (T != cachedMaskLen) {
-            int n = (int) T;
-            float[] data = new float[n * n];
-            for (int row = 0; row < n; row++) for (
-                int col = 0;
-                col < n;
-                col++
-            ) data[row * n + col] = (col <= row) ? 0f : MASK_VAL;
-            cachedMask = mgr.create(data, new Shape(1, 1, T, T));
-            cachedMaskLen = T;
+    private NDArray createCausalMask(NDManager mgr, long T) {
+        int n = (int) T;
+        float[] data = new float[n * n];
+        for (int row = 0; row < n; row++) {
+            for (int col = 0; col < n; col++) {
+                data[row * n + col] = (col <= row) ? 0f : MASK_VAL;
+            }
         }
-        return cachedMask;
+        return mgr.create(data, new Shape(1, 1, T, T));
     }
 
     @Override

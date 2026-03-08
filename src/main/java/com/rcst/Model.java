@@ -1,12 +1,15 @@
 package com.rcst;
 
+import ai.djl.MalformedModelException;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
+import ai.djl.nn.AbstractBlock;
 import ai.djl.nn.Parameter;
 import ai.djl.training.ParameterStore;
+import ai.djl.util.PairList;
 import com.rcst.common.RMSNorm;
 import com.rcst.layers.BitLinear;
 import com.rcst.layers.DecoderBlock;
@@ -23,16 +26,8 @@ import java.util.List;
 
 /**
  * BitNet b1.58 Transformer Model for Machine Translation.
- *
- * Encapsulates the complete architecture:
- * - Source and target token embedders (via Embedder.java)
- * - Encoder stack (N x EncoderBlock + RMSNorm)
- * - Decoder stack (N x DecoderBlock + RMSNorm)
- * - Output projection (BitLinear)
- *
- * Provides both training forward passes and greedy inference.
  */
-public class Model implements AutoCloseable {
+public class Model extends AbstractBlock implements AutoCloseable {
 
     private static final int BOS_ID = 2;
     private static final int EOS_ID = 3;
@@ -48,7 +43,7 @@ public class Model implements AutoCloseable {
     private final RMSNorm decoderNorm;
     private final BitLinear outProj;
 
-    // SPM for greedy translation (encoding/decoding)
+    // SPM for greedy translation
     private final com.sentencepiece.Model spm;
     private final SentencePieceAlgorithm spmAlgo;
 
@@ -111,26 +106,29 @@ public class Model implements AutoCloseable {
         this.outProj.initialize(manager, DataType.FLOAT32, seqShape);
     }
 
-    /**
-     * Forward pass for training or inference.
-     *
-     * @param ps        Parameter store
-     * @param srcIds    Source token IDs (B, T)
-     * @param tgtIn     Target input token IDs (B, T) - teacher forcing
-     * @param training  Whether to compute gradients
-     * @return Logits (B, T, vocabSize)
-     */
+    @Override
+    protected NDList forwardInternal(
+        ParameterStore ps,
+        NDList inputs,
+        boolean training,
+        PairList<String, Object> params
+    ) {
+        NDArray srcIds = inputs.get(0);
+        NDArray tgtIn = inputs.get(1);
+
+        NDArray logits = forward(ps, srcIds, tgtIn, training);
+        return new NDList(logits);
+    }
+
     public NDArray forward(
         ParameterStore ps,
         NDArray srcIds,
         NDArray tgtIn,
         boolean training
     ) {
-        // Encode source
         NDArray h = srcEmbedder
             .forward(ps, new NDList(srcIds), training)
             .singletonOrThrow();
-        assertNoNaN("srcEmb", h);
 
         for (EncoderBlock b : encoderBlocks) {
             h = b.forward(ps, new NDList(h), training).singletonOrThrow();
@@ -138,13 +136,10 @@ public class Model implements AutoCloseable {
         NDArray memory = encoderNorm
             .forward(ps, new NDList(h), training)
             .singletonOrThrow();
-        assertNoNaN("memory", memory);
 
-        // Decode target
         h = tgtEmbedder
             .forward(ps, new NDList(tgtIn), training)
             .singletonOrThrow();
-        assertNoNaN("tgtEmb", h);
 
         for (DecoderBlock b : decoderBlocks) {
             h = b
@@ -154,26 +149,16 @@ public class Model implements AutoCloseable {
         NDArray decoded = decoderNorm
             .forward(ps, new NDList(h), training)
             .singletonOrThrow();
-        assertNoNaN("decoded", decoded);
 
-        // Project to vocabulary
         return outProj
             .forward(ps, new NDList(decoded), training)
             .singletonOrThrow();
     }
 
-    /**
-     * Greedy translation from source text.
-     *
-     * @param sourceText Input text in source language
-     * @param maxLen     Maximum output length
-     * @return Translated text
-     */
     public String greedyTranslate(String sourceText, int maxLen) {
         try (NDManager stepMgr = manager.newSubManager()) {
             ParameterStore ps = new ParameterStore(stepMgr, false);
 
-            // Encode source
             List<Integer> srcTokens = spm.encodeNormalized(
                 sourceText.trim(),
                 spmAlgo
@@ -199,7 +184,6 @@ public class Model implements AutoCloseable {
                 .forward(ps, new NDList(h), false)
                 .singletonOrThrow();
 
-            // Greedy decode
             List<Integer> generated = new ArrayList<>();
             generated.add(BOS_ID);
 
@@ -244,9 +228,9 @@ public class Model implements AutoCloseable {
     }
 
     /**
-     * Collect all trainable parameters from the model.
+     * Returns flat list of parameters for optimizer use.
      */
-    public List<Parameter> getParameters() {
+    public List<Parameter> getParameterList() {
         List<Parameter> params = new ArrayList<>();
         collectParameters(srcEmbedder, params);
         collectParameters(tgtEmbedder, params);
@@ -265,9 +249,6 @@ public class Model implements AutoCloseable {
         params.addAll(block.getParameters().values());
     }
 
-    /**
-     * Save model weights to directory.
-     */
     public void save(Path dir) throws IOException {
         java.nio.file.Files.createDirectories(dir);
         saveBlock(srcEmbedder, dir, "src-embed");
@@ -283,11 +264,7 @@ public class Model implements AutoCloseable {
         saveBlock(outProj, dir, "out-proj");
     }
 
-    /**
-     * Load model weights from directory.
-     */
-    public void load(Path dir)
-        throws IOException, ai.djl.MalformedModelException {
+    public void load(Path dir) throws IOException, MalformedModelException {
         loadBlock(srcEmbedder, dir, "src-embed");
         loadBlock(tgtEmbedder, dir, "tgt-embed");
         for (int i = 0; i < encoderBlocks.size(); i++) {
@@ -310,28 +287,10 @@ public class Model implements AutoCloseable {
     }
 
     private void loadBlock(ai.djl.nn.AbstractBlock block, Path dir, String name)
-        throws IOException, ai.djl.MalformedModelException {
+        throws IOException, MalformedModelException {
         try (ai.djl.Model m = ai.djl.Model.newInstance(name)) {
             m.setBlock(block);
             m.load(dir, name);
-        }
-    }
-
-    private static void assertNoNaN(String stage, NDArray x) {
-        try (NDArray mask = x.isNaN(); NDArray any = mask.any()) {
-            if (!any.getBoolean()) return;
-        }
-        try (NDArray flat = x.flatten()) {
-            float[] sample = flat.toFloatArray();
-            int show = Math.min(8, sample.length);
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < show; i++) sb.append(sample[i]).append(' ');
-            System.err.printf(
-                "NaN at stage=%s  shape=%s  sample=[%s]%n",
-                stage,
-                x.getShape(),
-                sb
-            );
         }
     }
 
@@ -344,6 +303,12 @@ public class Model implements AutoCloseable {
     }
 
     @Override
+    public Shape[] getOutputShapes(Shape[] inputShapes) {
+        Shape in = inputShapes[0];
+        return new Shape[] { new Shape(in.get(0), in.get(1), cfg.vocabSize) };
+    }
+
+    // AutoCloseable implementation - no @Override needed
     public void close() {
         manager.close();
     }
