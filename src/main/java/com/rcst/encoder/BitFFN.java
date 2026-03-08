@@ -1,4 +1,4 @@
-package com.rcst.layers;
+package com.rcst.encoder;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
@@ -8,6 +8,7 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.AbstractBlock;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+import com.rcst.layers.BitLinear;
 
 /**
  * BitNet b1.58 Feed-Forward Network (FFN).

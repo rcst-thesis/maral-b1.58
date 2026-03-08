@@ -4,6 +4,7 @@ import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import com.rcst.TestFixture;
+import com.rcst.encoder.RoPE;
 import com.rcst.utils.ModelConfig;
 import junit.extensions.TestSetup;
 import junit.framework.Test;
@@ -41,8 +42,6 @@ public class RoPETest extends TestCase {
         };
     }
 
-    // ── helpers ──────────────────────────────────────────────────────────────
-
     /** Random float tensor of given shape. */
     private NDArray rand(long... dims) {
         return TestFixture.manager.randomNormal(
@@ -50,8 +49,6 @@ public class RoPETest extends TestCase {
             DataType.FLOAT32
         );
     }
-
-    // ── tests ─────────────────────────────────────────────────────────────────
 
     public void testOutputShapeMatchesInput() {
         NDArray x = rand(

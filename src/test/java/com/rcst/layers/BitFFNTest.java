@@ -6,6 +6,7 @@ import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.training.ParameterStore;
 import com.rcst.TestFixture;
+import com.rcst.encoder.BitFFN;
 import com.rcst.utils.ModelConfig;
 import junit.extensions.TestSetup;
 import junit.framework.Test;

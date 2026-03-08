@@ -7,6 +7,7 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.training.ParameterStore;
 import ai.djl.training.dataset.Batch;
 import com.rcst.TestFixture;
+import com.rcst.encoder.RMSNorm;
 import junit.extensions.TestSetup;
 import junit.framework.Test;
 import junit.framework.TestCase;
