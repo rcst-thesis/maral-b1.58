@@ -1,4 +1,4 @@
-package com.rcst.encoder;
+package com.rcst.layers;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
@@ -31,8 +31,6 @@ public class EncoderBlockTest extends TestCase {
 
     private static EncoderBlock block;
     private static Shape SEQ_SHAPE; // (B, T, dModel)
-
-    // ── Suite wiring ──────────────────────────────────────────────────────────
 
     public static Test suite() {
         return new TestSetup(new TestSuite(EncoderBlockTest.class)) {
@@ -69,8 +67,6 @@ public class EncoderBlockTest extends TestCase {
         };
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
     /** Random normal tensor of the standard sequence shape. */
     private NDArray rand() {
         return TestFixture.manager.randomNormal(SEQ_SHAPE, DataType.FLOAT32);
@@ -91,8 +87,6 @@ public class EncoderBlockTest extends TestCase {
             DataType.FLOAT32
         );
     }
-
-    // ── Tests ─────────────────────────────────────────────────────────────────
 
     /**
      * The encoder block must preserve the spatial shape of its input:

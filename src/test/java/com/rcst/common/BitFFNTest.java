@@ -1,4 +1,4 @@
-package com.rcst.layers;
+package com.rcst.common;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
@@ -6,7 +6,6 @@ import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.training.ParameterStore;
 import com.rcst.TestFixture;
-import com.rcst.encoder.BitFFN;
 import com.rcst.utils.ModelConfig;
 import junit.extensions.TestSetup;
 import junit.framework.Test;
@@ -16,7 +15,7 @@ import junit.framework.TestSuite;
 public class BitFFNTest extends TestCase {
 
     private static BitFFN ffn;
-    private static Shape SEQ_SHAPE; // (B, T, dModel)
+    private static Shape SEQ_SHAPE;
 
     public static Test suite() {
         return new TestSetup(new TestSuite(BitFFNTest.class)) {
@@ -89,23 +88,17 @@ public class BitFFNTest extends TestCase {
         assertTrue("FFN must produce non-zero outputs", hasNonZero);
     }
 
-    /**
-     * ReLU² activation means no output element can be negative.
-     * The down-projection can produce negatives, but this test confirms
-     * the intermediate activations are non-negative — verified by checking
-     * that a zero input stays zero (ReLU²(0) = 0) and a large positive
-     * input passes through (ReLU²(x >> 0) > 0).
-     */
+    // ReLU^2 gates out all signal from a zero input — the down-projection
+    // multiplies nothing, so the output must also be zero.
     public void testZeroInputGivesZeroOutput() {
         ParameterStore ps = TestFixture.freshPs();
         NDArray zeros = TestFixture.manager.zeros(SEQ_SHAPE, DataType.FLOAT32);
-        NDArray out = ffn
+        for (float v : ffn
             .forward(ps, new NDList(zeros), false)
-            .singletonOrThrow();
-        for (float v : out.toFloatArray()) {
+            .singletonOrThrow()
+            .toFloatArray()) {
             assertEquals("FFN(0) must be 0", 0f, v, 1e-5f);
         }
-        System.out.println("BitFFN(0) = 0 ✓");
     }
 
     public void testOutputIsDeterministic() {

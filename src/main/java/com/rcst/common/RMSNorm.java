@@ -1,4 +1,4 @@
-package com.rcst.encoder;
+package com.rcst.common;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;

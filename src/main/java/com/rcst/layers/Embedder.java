@@ -1,4 +1,4 @@
-package com.rcst.embeddings;
+package com.rcst.layers;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;

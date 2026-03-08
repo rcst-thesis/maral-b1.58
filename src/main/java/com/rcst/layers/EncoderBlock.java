@@ -1,4 +1,4 @@
-package com.rcst.encoder;
+package com.rcst.layers;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
@@ -8,6 +8,9 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.AbstractBlock;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+import com.rcst.common.BitFFN;
+import com.rcst.common.MultiHeadAttention;
+import com.rcst.common.RMSNorm;
 
 /**
  * BitNet b1.58 Encoder Block.

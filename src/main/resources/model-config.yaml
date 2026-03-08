@@ -2,7 +2,6 @@ model:
   name: maral-b1.58-125m
   version: 0.1.0
 
-# ── Tokenizer ─────────────────────────────────────────────────────────────────
 tokenizer:
   model_path: src/main/resources/models/maral.bpe.model
   vocab_size: 8000
@@ -11,28 +10,25 @@ tokenizer:
   bos_id: 2
   eos_id: 3
 
-# ── Architecture ──────────────────────────────────────────────────────────────
 architecture:
-  d_model: 128 # reduced from 512 — fits in RAM with Adam state
-  n_heads: 4 # reduced from 8   — d_model / n_heads = 32
-  n_encoder_layers: 2 # reduced from 6
-  n_decoder_layers: 2 # reduced from 6
-  d_ffn: 336 # 2.625 * d_model
-  max_seq_len: 32 # reduced from 256
+  d_model: 128
+  n_heads: 4
+  n_encoder_layers: 2
+  n_decoder_layers: 2
+  d_ffn: 336
+  max_seq_len: 32
   dropout: 0.0
   eps: 1.0e-6
   rope_base: 10000
 
-# ── BitLinear quantization ────────────────────────────────────────────────────
 quantization:
   weight_bits: 1.58
   activation_bits: 8
   eps: 1.0e-8
 
-# ── Training ──────────────────────────────────────────────────────────────────
 training:
   batch_size: 1
-  block_size: 32 # matches max_seq_len
+  block_size: 32
   train_ratio: 0.9
   seed: 42
   max_epochs: 30
@@ -40,15 +36,15 @@ training:
   weight_decay: 0.1
   warmup_steps: 100
   grad_clip: 1.0
+  grad_accum_steps: 4
+  sample_every_n_epochs: 5
 
-# ── Checkpointing ─────────────────────────────────────────────────────────────
 checkpoint:
-  dir: checkpoints # relative to project root
-  save_every_n_epochs: 1 # save after every N epochs (1 = every epoch)
-  keep_last_n: 5 # delete older checkpoints, keep only the N most recent
-  resume_from: "" # set to "checkpoints/epoch-005" to resume; empty = train from scratch
+  dir: checkpoints
+  save_every_n_epochs: 1
+  keep_last_n: 5
+  resume_from: ""
 
-# ── Data ──────────────────────────────────────────────────────────────────────
 data:
   corpus: src/main/resources/data/corpus.txt
   parallel: src/main/resources/data/en-tl.tsv
