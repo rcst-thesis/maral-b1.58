@@ -1,0 +1,4 @@
+globalStep=342
+epoch=38
+trainLoss=9.271958
+valLoss=0.0

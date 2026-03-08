@@ -7,9 +7,10 @@ com/rcst/layers/BitDecoderBlock.class
 com/rcst/layers/BitLinear.class
 com/rcst/ModelConfig.class
 com/rcst/layers/BitEncoderBlock.class
-com/rcst/TensorEncoder.class
 com/rcst/layers/BitAttention.class
+com/rcst/TensorEncoder.class
 com/rcst/Tokenizer.class
 com/rcst/TrainingDataLoader.class
 com/rcst/layers/RMSNorm.class
+com/rcst/Inference.class
 com/rcst/layers/BitFFN.class

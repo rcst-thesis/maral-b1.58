@@ -24,6 +24,7 @@ import java.nio.file.Paths;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
@@ -34,28 +35,37 @@ import java.util.stream.Stream;
 /**
  * Training loop for maral-b1.58.
  *
- * ── Checkpointing ────────────────────────────────────────────────────────────
- * After every N epochs (configured by checkpoint.save_every_n_epochs) the
- * model is flushed to disk at:
+ * ── Checkpointing ─────────────────────────────────────────────────────────────
+ * Two checkpoint strategies run in parallel:
  *
- *   checkpoints/epoch-NNN/
- *     src-embed-0000.params
- *     tgt-embed-0000.params
- *     encoder-0000.params
- *     decoder-0000.params
- *     out-proj-0000.params
- *     training-state.txt        ← globalStep + last train/val loss
+ * 1) Rolling epoch checkpoints  (save_every_n_epochs, keep_last_n)
+ *    Written to:  checkpoints/epoch-NNN/
+ *    Old ones are evicted once the queue exceeds keep_last_n.
+ *    Useful for resuming a crashed run.
  *
- * Old checkpoints beyond keep_last_n are deleted automatically.
+ * 2) Best-val checkpoint  (automatic, never evicted)
+ *    Written to:  checkpoints/best/
+ *    Overwritten whenever val loss improves.
+ *    This is the checkpoint you load for inference.
  *
- * To resume from a checkpoint set resume_from in model-config.yaml:
- *   resume_from: "checkpoints/epoch-005"
+ * Both layouts:
+ *   src-embed-0000.params
+ *   tgt-embed-0000.params
+ *   encoder-0000.params
+ *   decoder-0000.params
+ *   out-proj-0000.params
+ *   training-state.txt
  *
- * ── Memory management (DJL issue #2210) ──────────────────────────────────────
+ * To resume from a checkpoint set resume_from in model-config.yaml, e.g.:
+ *   resume_from: "checkpoints/best"
+ *   resume_from: "checkpoints/epoch-028"
+ *
+ * ── Memory management (DJL issue #2210) ───────────────────────────────────────
  * - BitLinear scopes all weight-derived intermediates in a per-forward wScope.
  * - trainStep uses a stepMgr sub-manager; closing it frees all step tensors.
- * - evaluate runs on GPU (same device as model) in a evalMgr without a
- *   GradientCollector — no device mismatch, no gradient accumulation.
+ * - Gradient wrappers are closed immediately after use in zeroGradients(),
+ *   clipGradients(), and adamUpdate() to prevent VRAM accumulation.
+ * - evaluate() runs on GPU in an evalMgr without GradientCollector.
  */
 public class Trainer {
 
@@ -75,19 +85,22 @@ public class Trainer {
     private final BitDecoder decoder;
     private final BitLinear outProj;
 
-    // Adam state: per-parameter first (m) and second (v) moment vectors
+    // Adam state
     private final List<Parameter> params = new ArrayList<>();
     private final Map<String, NDArray[]> adamState = new HashMap<>();
 
     // Training state (persisted in training-state.txt)
     private int globalStep = 0;
-    private int startEpoch = 1; // updated when resuming
+    private int startEpoch = 1;
     private float lastValLoss = Float.MAX_VALUE;
 
-    // Rolling queue of saved checkpoint paths for keep_last_n eviction
+    // Best checkpoint tracking — updated whenever val loss improves
+    private float bestValLoss = Float.MAX_VALUE;
+
+    // Rolling queue for epoch-NNN eviction
     private final Deque<Path> checkpointQueue = new ArrayDeque<>();
 
-    // ── Construction ─────────────────────────────────────────────────────────
+    // ── Construction ──────────────────────────────────────────────────────────
 
     public Trainer() throws Exception {
         this.cfg = ModelConfig.get();
@@ -139,7 +152,6 @@ public class Trainer {
             params.size()
         );
 
-        // Resume from checkpoint if configured
         if (!cfg.resumeFrom.isEmpty()) {
             loadCheckpoint(Paths.get(cfg.resumeFrom));
         }
@@ -190,11 +202,19 @@ public class Trainer {
                 }
             }
 
-            // Validation: GPU, no gradients, isolated sub-manager
+            // Validation — every 5 epochs and on epoch 1
             float valLoss = 0f;
             if (epoch % 5 == 0 || epoch == 1) {
                 valLoss = evaluate(valSet);
                 lastValLoss = valLoss;
+
+                // ── Best checkpoint ───────────────────────────────────────
+                // Save whenever val loss improves (valLoss > 0 guards epochs
+                // where evaluate() wasn't called and returned 0).
+                if (valLoss > 0f && valLoss < bestValLoss) {
+                    bestValLoss = valLoss;
+                    saveBestCheckpoint(epoch, totalLoss / nBatches, valLoss);
+                }
             }
 
             System.out.printf(
@@ -204,13 +224,12 @@ public class Trainer {
                 valLoss
             );
 
-            // ── Checkpoint ───────────────────────────────────────────────────
+            // ── Rolling epoch checkpoint ──────────────────────────────────
             if (epoch % cfg.saveEveryNEpochs == 0) {
-                saveCheckpoint(epoch, totalLoss / nBatches, valLoss);
+                saveEpochCheckpoint(epoch, totalLoss / nBatches, valLoss);
             }
 
-            // Nudge Java GC and hint PyTorch to release cached-but-free CUDA blocks.
-            // This won't fix leaks, but keeps fragmentation from compounding each epoch.
+            // Nudge GC — reduces allocator fragmentation between epochs
             System.gc();
         }
     }
@@ -289,23 +308,53 @@ public class Trainer {
             .singletonOrThrow();
     }
 
-    // ── Checkpoint save ───────────────────────────────────────────────────────
+    // ── Best checkpoint ───────────────────────────────────────────────────────
 
     /**
-     * Saves all five model components as DJL .params files inside a
-     * per-epoch sub-directory, then writes a training-state.txt and
-     * evicts the oldest checkpoint if the queue exceeds keepLastN.
+     * Saves the best model so far to checkpoints/best/.
+     * This directory is NEVER evicted by rolling cleanup — it is the
+     * checkpoint intended for inference.
      *
-     * Directory layout:
-     *   checkpoints/epoch-005/
-     *     src-embed-0000.params
-     *     tgt-embed-0000.params
-     *     encoder-0000.params
-     *     decoder-0000.params
-     *     out-proj-0000.params
-     *     training-state.txt
+     * training-state.txt additionally records "bestEpoch" so you know
+     * which epoch produced it.
      */
-    private void saveCheckpoint(int epoch, float trainLoss, float valLoss)
+    private void saveBestCheckpoint(int epoch, float trainLoss, float valLoss)
+        throws IOException {
+        Path bestPath = Paths.get(cfg.checkpointDir, "best");
+        Files.createDirectories(bestPath);
+
+        saveBlock(srcEmbed, bestPath, "src-embed");
+        saveBlock(tgtEmbed, bestPath, "tgt-embed");
+        saveBlock(encoder, bestPath, "encoder");
+        saveBlock(decoder, bestPath, "decoder");
+        saveBlock(outProj, bestPath, "out-proj");
+
+        Path statePath = bestPath.resolve("training-state.txt");
+        try (BufferedWriter w = Files.newBufferedWriter(statePath)) {
+            w.write("bestEpoch=" + epoch);
+            w.newLine();
+            w.write("globalStep=" + globalStep);
+            w.newLine();
+            w.write("trainLoss=" + trainLoss);
+            w.newLine();
+            w.write("valLoss=" + valLoss);
+            w.newLine();
+        }
+
+        System.out.printf(
+            "  ★ best checkpoint saved → %s  (val=%.4f)%n",
+            bestPath,
+            valLoss
+        );
+    }
+
+    // ── Rolling epoch checkpoint ──────────────────────────────────────────────
+
+    /**
+     * Saves a numbered epoch checkpoint and evicts the oldest once the
+     * rolling queue exceeds keep_last_n.
+     */
+    private void saveEpochCheckpoint(int epoch, float trainLoss, float valLoss)
         throws IOException {
         String folderName = String.format("epoch-%03d", epoch);
         Path ckptPath = Paths.get(cfg.checkpointDir, folderName);
@@ -317,7 +366,6 @@ public class Trainer {
         saveBlock(decoder, ckptPath, "decoder");
         saveBlock(outProj, ckptPath, "out-proj");
 
-        // Training state — plain text, one key=value per line
         Path statePath = ckptPath.resolve("training-state.txt");
         try (BufferedWriter w = Files.newBufferedWriter(statePath)) {
             w.write("globalStep=" + globalStep);
@@ -332,7 +380,6 @@ public class Trainer {
 
         System.out.printf("  ✓ checkpoint saved → %s%n", ckptPath);
 
-        // Rolling eviction: remove oldest when queue exceeds keepLastN
         checkpointQueue.addLast(ckptPath);
         while (checkpointQueue.size() > cfg.keepLastN) {
             Path old = checkpointQueue.removeFirst();
@@ -355,6 +402,8 @@ public class Trainer {
     /**
      * Loads all five components from a checkpoint directory and restores
      * globalStep / startEpoch from training-state.txt.
+     *
+     * Works for both "checkpoints/best" and "checkpoints/epoch-NNN".
      */
     private void loadCheckpoint(Path ckptPath)
         throws IOException, MalformedModelException {
@@ -373,21 +422,26 @@ public class Trainer {
                 while ((line = r.readLine()) != null) {
                     String[] parts = line.split("=", 2);
                     if (parts.length < 2) continue;
-                    switch (parts[0].trim()) {
-                        case "globalStep":
-                            globalStep = Integer.parseInt(parts[1].trim());
-                        case "epoch":
-                            startEpoch = Integer.parseInt(parts[1].trim()) + 1;
-                        case "valLoss":
-                            lastValLoss = Float.parseFloat(parts[1].trim());
+                    String key = parts[0].trim();
+                    String val = parts[1].trim();
+                    // Plain if-else — no switch expressions, pure Java 17
+                    if ("globalStep".equals(key)) {
+                        globalStep = Integer.parseInt(val);
+                    } else if ("epoch".equals(key) || "bestEpoch".equals(key)) {
+                        startEpoch = Integer.parseInt(val) + 1;
+                    } else if ("valLoss".equals(key)) {
+                        lastValLoss = Float.parseFloat(val);
+                        // Restore bestValLoss so we don't immediately overwrite
+                        // a good "best" checkpoint on resume
+                        bestValLoss = lastValLoss;
                     }
                 }
             }
             System.out.printf(
-                "  Resumed: globalStep=%d  nextEpoch=%d  lastValLoss=%.4f%n",
+                "  Resumed: globalStep=%d  nextEpoch=%d  bestValLoss=%.4f%n",
                 globalStep,
                 startEpoch,
-                lastValLoss
+                bestValLoss
             );
         }
     }
@@ -421,8 +475,8 @@ public class Trainer {
         for (Parameter p : params) {
             NDArray grad = p.getArray().getGradient();
             if (grad == null) continue;
-            grad.subi(grad); // zero in-place
-            grad.close(); // release the wrapper — prevents accumulation across steps
+            grad.subi(grad);
+            grad.close(); // release wrapper — prevents accumulation across steps
         }
     }
 
@@ -434,7 +488,7 @@ public class Trainer {
             try (NDArray sq = g.pow(2); NDArray s = sq.sum()) {
                 totalSq += s.getFloat();
             }
-            g.close(); // ← close the norm-pass wrapper
+            g.close();
         }
         float scale = cfg.gradClip / ((float) Math.sqrt(totalSq) + 1e-6f);
         if (scale < 1f) {
@@ -442,7 +496,7 @@ public class Trainer {
                 NDArray g = p.getArray().getGradient();
                 if (g == null) continue;
                 g.muli(scale);
-                g.close(); // ← close the scale-pass wrapper
+                g.close();
             }
         }
     }
@@ -484,7 +538,7 @@ public class Trainer {
                 weight.subi(step);
             }
 
-            grad.close(); // ← CRITICAL: release gradient wrapper after each param update
+            grad.close(); // release gradient wrapper
         }
     }
 
@@ -539,7 +593,9 @@ public class Trainer {
             for (int t = 0; t < T; t++) {
                 src[b][t] = t < s.length ? s[t] : PAD_ID;
                 tin[b][t] =
-                    t == 0 ? BOS_ID : t - 1 < tgt.length ? tgt[t - 1] : PAD_ID;
+                    t == 0
+                        ? BOS_ID
+                        : (t - 1 < tgt.length ? tgt[t - 1] : PAD_ID);
                 tout[b][t] = t < tgt.length ? tgt[t] : PAD_ID;
             }
         }
@@ -576,12 +632,15 @@ public class Trainer {
         return pairs;
     }
 
-    /** Recursively delete a checkpoint directory. */
+    /**
+     * Recursively delete a checkpoint directory.
+     * Uses explicit Stream<Path> — no var, Java 17 safe.
+     */
     private static void deleteDirectory(Path dir) throws IOException {
         if (!Files.exists(dir)) return;
         try (Stream<Path> stream = Files.walk(dir)) {
             stream
-                .sorted(java.util.Comparator.reverseOrder())
+                .sorted(Comparator.reverseOrder())
                 .forEach(p -> {
                     try {
                         Files.delete(p);
@@ -603,9 +662,6 @@ public class Trainer {
             "ai.djl.pytorch.num_threads",
             String.valueOf(usableCores)
         );
-
-        // Reduce CUDA allocator fragmentation — avoids OOM from allocator holding
-        // freed blocks in rigid-size buckets. Set before PyTorch engine initialises.
         System.setProperty(
             "PYTORCH_CUDA_ALLOC_CONF",
             "expandable_segments:True"

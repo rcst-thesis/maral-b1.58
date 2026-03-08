@@ -58,6 +58,14 @@
         <scope>compile</scope>
     </dependency>
 
+    <!-- Source: https://mvnrepository.com/artifact/org.slf4j/slf4j-simple -->
+    <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-simple</artifactId>
+        <version>2.0.17</version>
+        <scope>test</scope>
+    </dependency>
+
     <dependency>
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>
@@ -77,18 +85,34 @@
        </configuration>
      </plugin>
 
-      <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>exec-maven-plugin</artifactId>
-        <version>3.6.3</version>
-        <configuration>
-          <!-- Entry point -->
-          <mainClass>com.rcst.Trainer</mainClass>
-          <arguments />
-            <!-- 80% of system RAM as JVM heap -->
-            <commandlineArgs>-Xmx7372m</commandlineArgs>
-        </configuration>
-      </plugin>
+     <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>exec-maven-plugin</artifactId>
+          <version>3.6.3</version>
+          <!-- NOTE: exec:java runs inside Maven's JVM — heap is controlled via
+               MAVEN_OPTS in the Justfile. <commandlineArgs> only works with
+               exec:exec and would be passed as a program argument here. -->
+          <executions>
+            <!-- just train  →  mvn exec:java@train -->
+            <execution>
+              <id>train</id>
+              <configuration>
+                <mainClass>com.rcst.Trainer</mainClass>
+              </configuration>
+            </execution>
+            <!-- just infer  →  mvn exec:java@infer -Dinfer.ckpt=<path> -->
+            <execution>
+              <id>infer</id>
+              <configuration>
+                <mainClass>com.rcst.Inference</mainClass>
+                <arguments>
+                  <argument>${infer.ckpt}</argument>
+                </arguments>
+              </configuration>
+            </execution>
+          </executions>
+        </plugin>
+
     </plugins>
   </build>
 

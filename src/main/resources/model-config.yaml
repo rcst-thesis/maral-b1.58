@@ -35,7 +35,7 @@ training:
   block_size: 32 # matches max_seq_len
   train_ratio: 0.9
   seed: 42
-  max_epochs: 30
+  max_epochs: 60
   learning_rate: 3.0e-4
   weight_decay: 0.1
   warmup_steps: 100
