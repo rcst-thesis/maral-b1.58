@@ -1,5 +1,6 @@
 package com.rcst;
 
+import com.rcst.utils.Tokenizer;
 import java.nio.file.Paths;
 import java.util.List;
 import junit.framework.TestCase;

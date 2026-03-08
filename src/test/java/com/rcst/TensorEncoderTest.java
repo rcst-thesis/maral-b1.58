@@ -2,6 +2,8 @@ package com.rcst;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDManager;
+import com.rcst.utils.TensorEncoder;
+import com.rcst.utils.Tokenizer;
 import java.nio.file.Paths;
 import java.util.List;
 import junit.framework.TestCase;

@@ -1,4 +1,4 @@
-package com.rcst;
+package com.rcst.utils;
 
 import java.io.IOException;
 import java.io.InputStream;

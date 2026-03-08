@@ -1,4 +1,4 @@
-package com.rcst;
+package com.rcst.utils;
 
 import com.sentencepiece.Model;
 import com.sentencepiece.Scoring;

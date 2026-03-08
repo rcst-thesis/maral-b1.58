@@ -1,4 +1,4 @@
-package com.rcst;
+package com.rcst.utils;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDManager;
