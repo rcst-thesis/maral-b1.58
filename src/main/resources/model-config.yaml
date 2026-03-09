@@ -1,0 +1,52 @@
+model:
+  name: maral-b1.58-small
+  version: 0.1.0
+
+tokenizer:
+  model_path: src/main/resources/models/maral.bpe.model
+  vocab_size: 8000
+  pad_id: 0
+  unk_id: 1
+  bos_id: 2
+  eos_id: 3
+
+architecture:
+  d_model: 128 # Sweet spot for your memory
+  n_heads: 4 # Keep at 4 (128/4=32 head dim)
+  n_encoder_layers: 2 # Keep shallow (memory grows with layers)
+  n_decoder_layers: 2
+  d_ffn: 512 # 4x d_model is standard
+  max_seq_len: 32
+  dropout: 0.2 # Higher dropout for tiny dataset
+  eps: 1.0e-6
+  rope_base: 10000
+
+quantization:
+  weight_bits: 1.58
+  activation_bits: 8
+  eps: 1.0e-8
+
+training:
+  batch_size: 1
+  block_size: 32
+  train_ratio: 0.8 # 8 train / 2 val
+  seed: 42
+  max_epochs: 200 # Need more epochs for small data
+  learning_rate: 5.0e-4
+  weight_decay: 0.2 # Aggressive regularization
+  warmup_steps: 10
+  grad_clip: 1.0
+  grad_accum_steps: 1
+  sample_every_n_epochs: 20
+
+checkpoint:
+  dir: checkpoints
+  save_every_n_epochs: 5
+  keep_last_n: 3
+  resume_from: ""
+
+data:
+  corpus: src/main/resources/data/corpus.txt
+  parallel: src/main/resources/data/en-tl.tsv
+  source_lang: en
+  target_lang: tl

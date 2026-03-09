@@ -1,0 +1,3 @@
+## Parallel corpus, multilingual corpus
+
+A parallel corpus consists of two or more monolingual corpora. The corpora are the translations of each other. For example, a novel and its translation or a translation memory of a CAT tool could be used to build a parallel corpus. Both languages need to be aligned, i.e. corresponding segments, usually sentences or paragraphs, need to be matched. The user can then search for all examples of a word or phrase in one language and the results will be displayed together with the corresponding sentences in the other language. The user can then observe how the search word or phrase is translated.
