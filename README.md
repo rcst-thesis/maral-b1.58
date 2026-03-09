@@ -32,3 +32,5 @@ refs:
 - https://moldstud.com/articles/p-creating-neural-networks-in-java-a-comprehensive-step-by-step-guide
 - https://machinelearningmastery.com/building-a-transformer-model-for-language-translation/
 - https://medium.com/@sayedebad.777/building-a-transformer-from-scratch-a-step-by-step-guide-a3df0aeb7c9a
+- https://www.tensorflow.org/text/tutorials/transformer
+- https://www.geeksforgeeks.org/deep-learning/transformer-using-pytorch/

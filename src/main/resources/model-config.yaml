@@ -1,5 +1,5 @@
 model:
-  name: maral-b1.58-125m
+  name: maral-b1.58-small
   version: 0.1.0
 
 tokenizer:
@@ -11,13 +11,13 @@ tokenizer:
   eos_id: 3
 
 architecture:
-  d_model: 64
-  n_heads: 4
-  n_encoder_layers: 2
+  d_model: 128 # Sweet spot for your memory
+  n_heads: 4 # Keep at 4 (128/4=32 head dim)
+  n_encoder_layers: 2 # Keep shallow (memory grows with layers)
   n_decoder_layers: 2
-  d_ffn: 168
+  d_ffn: 512 # 4x d_model is standard
   max_seq_len: 32
-  dropout: 0.0
+  dropout: 0.2 # Higher dropout for tiny dataset
   eps: 1.0e-6
   rope_base: 10000
 
@@ -29,20 +29,20 @@ quantization:
 training:
   batch_size: 1
   block_size: 32
-  train_ratio: 0.9
+  train_ratio: 0.8 # 8 train / 2 val
   seed: 42
-  max_epochs: 30
-  learning_rate: 3.0e-4
-  weight_decay: 0.1
-  warmup_steps: 100
+  max_epochs: 200 # Need more epochs for small data
+  learning_rate: 5.0e-4
+  weight_decay: 0.2 # Aggressive regularization
+  warmup_steps: 10
   grad_clip: 1.0
-  grad_accum_steps: 4
-  sample_every_n_epochs: 5
+  grad_accum_steps: 1
+  sample_every_n_epochs: 20
 
 checkpoint:
   dir: checkpoints
-  save_every_n_epochs: 1
-  keep_last_n: 5
+  save_every_n_epochs: 5
+  keep_last_n: 3
   resume_from: ""
 
 data:
