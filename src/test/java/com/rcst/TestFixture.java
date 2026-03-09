@@ -7,16 +7,15 @@ import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.training.ParameterStore;
 import ai.djl.training.dataset.Batch;
+import com.rcst.common.RMSNorm;
 import com.rcst.layers.BitLinear;
-import com.rcst.layers.RMSNorm;
-import java.util.List;
+import com.rcst.layers.Embedder;
+import com.rcst.utils.ModelConfig;
 
 /**
- * Shared test fixture — single NDManager, Tokenizer, Loader and EmbeddingTable
- * for the entire test suite. Eliminates duplicated setUp/tearDown across classes.
+ * Shared test fixture. Single NDManager and Embedder for the entire test suite.
  *
- * Usage
- *
+ * Usage:
  *   public static Test suite() {
  *       return new TestSetup(new TestSuite(MyTest.class)) {
  *           protected void setUp()    throws Exception { TestFixture.init(); }
@@ -24,20 +23,12 @@ import java.util.List;
  *       };
  *   }
  *
- *   // inside a test method:
- *   ParameterStore ps    = TestFixture.freshPs();
- *   Batch          batch = TestFixture.loader.sampleTrain();
- *   NDArray        emb   = TestFixture.embed(batch, ps);
- *
- * Notes
- *  - BATCH_SIZE and BLOCK_SIZE are clamped to small values so tests stay fast,
- *    regardless of what is set in model-config.yaml.
- *  - Always call freshPs() per test — never share one ParameterStore across
- *    Batch scopes, or you will hit "Native resource already released".
+ * BATCH_SIZE and BLOCK_SIZE are clamped small so tests stay fast regardless
+ * of model-config.yaml. Always call freshPs() per test — sharing a
+ * ParameterStore across Batch scopes causes "Native resource already released".
  */
 public final class TestFixture {
 
-    // Dimensions (derived from config, clamped for speed)
     public static int VOCAB_SIZE;
     public static int D_MODEL;
     public static int BATCH_SIZE;
@@ -45,29 +36,10 @@ public final class TestFixture {
     public static double TRAIN_RATIO;
     public static long SEED;
 
-    // Shared objects
     public static NDManager manager;
-    public static Tokenizer tokenizer;
-    public static TrainingDataLoader loader;
-    public static TokenEmbeddingTable embeddingTable;
-
-    // Bilingual sample sentences (mirrors en-tl corpus style)
-    public static final List<String> SENTENCES = List.of(
-        "Good morning, how are you?",
-        "Magandang umaga, kumusta ka?",
-        "I am going to the market.",
-        "Pupunta ako sa palengke.",
-        "The weather is nice today.",
-        "Maganda ang panahon ngayon.",
-        "Can you help me please?",
-        "Maaari mo ba akong tulungan?",
-        "I love learning new languages.",
-        "Mahilig akong matuto ng bagong wika."
-    );
+    public static Embedder embedder;
 
     private TestFixture() {}
-
-    // Lifecycle
 
     public static void init() throws Exception {
         ModelConfig cfg = ModelConfig.get();
@@ -76,61 +48,34 @@ public final class TestFixture {
         D_MODEL = cfg.dModel;
         TRAIN_RATIO = cfg.trainRatio;
         SEED = cfg.seed;
-        // Clamp to small values — tests must be fast regardless of prod config
         BATCH_SIZE = Math.min(cfg.batchSize, 4);
         BLOCK_SIZE = Math.min(cfg.blockSize, 8);
 
         manager = NDManager.newBaseManager();
-        tokenizer = new Tokenizer();
 
-        TensorEncoder encoder = new TensorEncoder(tokenizer, manager);
-        NDArray[] tensors = encoder.encodeBatch(SENTENCES);
-
-        loader = new TrainingDataLoader(
-            tensors,
-            manager,
-            BLOCK_SIZE,
-            BATCH_SIZE,
-            TRAIN_RATIO,
-            SEED
-        );
-
-        embeddingTable = new TokenEmbeddingTable(VOCAB_SIZE, D_MODEL);
-        embeddingTable.initialize(
+        embedder = new Embedder(cfg.vocabSize, cfg.dModel);
+        embedder.initialize(
             manager,
             DataType.FLOAT32,
             new Shape(BATCH_SIZE, BLOCK_SIZE)
         );
+        embedder.initLoader(manager, BLOCK_SIZE, BATCH_SIZE, TRAIN_RATIO, SEED);
     }
 
     public static void destroy() throws Exception {
-        if (tokenizer != null) tokenizer.close();
         if (manager != null) manager.close();
     }
 
-    // Factory helpers
-
-    /**
-     * Fresh ParameterStore per test — prevents stale weight cache across
-     * Batch scopes. Call this at the top of every test method.
-     */
     public static ParameterStore freshPs() {
         return new ParameterStore(manager, false);
     }
 
-    /**
-     * Token embedding lookup from a batch's data tensor.
-     * Returns shape: (BATCH_SIZE, BLOCK_SIZE, D_MODEL).
-     */
     public static NDArray embed(Batch batch, ParameterStore ps) {
-        return embeddingTable
+        return embedder
             .forward(ps, new NDList(batch.getData().head()), false)
             .singletonOrThrow();
     }
 
-    /**
-     * Build and initialise a RMSNorm sized to D_MODEL with eps from config.
-     */
     public static RMSNorm buildRMSNorm() {
         RMSNorm norm = new RMSNorm(D_MODEL, ModelConfig.get().eps);
         norm.initialize(
@@ -141,9 +86,6 @@ public final class TestFixture {
         return norm;
     }
 
-    /**
-     * Build and initialise a BitLinear(inFeat → outFeat) with eps from config.
-     */
     public static BitLinear buildBitLinear(int inFeat, int outFeat) {
         BitLinear bl = new BitLinear(
             inFeat,

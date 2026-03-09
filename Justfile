@@ -9,6 +9,9 @@ install:
 train:
     mvn clean compile exec:java@train
 
+chart:
+    mvn compile exec:java -Dexec.mainClass="com.rcst.TrainingChart" -Dexec.args="checkpoints/training_log.csv checkpoints/training_chart"
+
 # Interactive translation REPL — loads checkpoints/best by default.
 # Pass a specific checkpoint as the first argument:
 

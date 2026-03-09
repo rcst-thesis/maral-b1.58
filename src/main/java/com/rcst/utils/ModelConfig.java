@@ -1,4 +1,4 @@
-package com.rcst;
+package com.rcst.utils;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -10,15 +10,10 @@ import org.yaml.snakeyaml.Yaml;
 
 /**
  * Loads model-config.yaml and exposes all hyperparameters as typed, final fields.
- *
- * Default lookup: src/main/resources/model-config.yaml
- * Override via:   ModelConfig.load(Path)  — useful in tests.
- *
  * Singleton — call ModelConfig.get() everywhere; the file is parsed once.
  */
 public final class ModelConfig {
 
-    // ── Tokenizer ─────────────────────────────────────────────────────────────
     public final String tokenizerModelPath;
     public final int vocabSize;
     public final int padId;
@@ -26,7 +21,6 @@ public final class ModelConfig {
     public final int bosId;
     public final int eosId;
 
-    // ── Architecture ──────────────────────────────────────────────────────────
     public final int dModel;
     public final int nHeads;
     public final int nEncoderLayers;
@@ -37,10 +31,8 @@ public final class ModelConfig {
     public final float eps;
     public final int ropeBase;
 
-    // ── Quantization ──────────────────────────────────────────────────────────
     public final float quantEps;
 
-    // ── Training ──────────────────────────────────────────────────────────────
     public final int batchSize;
     public final int blockSize;
     public final double trainRatio;
@@ -50,31 +42,24 @@ public final class ModelConfig {
     public final float weightDecay;
     public final int warmupSteps;
     public final float gradClip;
+    // Accumulate gradients over N steps before one optimizer update.
+    // Effective batch size = batchSize * gradAccumSteps.
+    public final int gradAccumSteps;
+    // Print a greedy translation sample every N epochs during training. 0 = off.
+    public final int sampleEveryNEpochs;
 
-    // ── Checkpoint ────────────────────────────────────────────────────────────
-    /** Root directory where epoch sub-folders are written. */
     public final String checkpointDir;
-    /** Write a checkpoint every N epochs (1 = every epoch). */
     public final int saveEveryNEpochs;
-    /** Keep only the N most recent checkpoints; older ones are deleted. */
     public final int keepLastN;
-    /**
-     * If non-empty, resume training from this checkpoint directory
-     * (e.g. "checkpoints/epoch-005").  Empty string means start fresh.
-     */
     public final String resumeFrom;
 
-    // ── Data ──────────────────────────────────────────────────────────────────
     public final String corpusPath;
     public final String parallelPath;
     public final String sourceLang;
     public final String targetLang;
 
-    // ── Singleton ─────────────────────────────────────────────────────────────
-
     private static final String DEFAULT_PATH =
         "src/main/resources/model-config.yaml";
-
     private static volatile ModelConfig instance;
 
     public static ModelConfig get() {
@@ -101,8 +86,6 @@ public final class ModelConfig {
             return new ModelConfig(new Yaml().load(is));
         }
     }
-
-    // ── Constructor ───────────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
     private ModelConfig(Map<String, Object> root) {
@@ -146,6 +129,12 @@ public final class ModelConfig {
         warmupSteps = (int) train.get("warmup_steps");
         gradClip = ((Number) train.get("grad_clip")).floatValue();
 
+        Object gas = train.get("grad_accum_steps");
+        gradAccumSteps = (gas != null) ? (int) gas : 1;
+
+        Object sen = train.get("sample_every_n_epochs");
+        sampleEveryNEpochs = (sen != null) ? (int) sen : 0;
+
         checkpointDir = (String) ckpt.get("dir");
         saveEveryNEpochs = (int) ckpt.get("save_every_n_epochs");
         keepLastN = (int) ckpt.get("keep_last_n");
@@ -161,8 +150,7 @@ public final class ModelConfig {
     @Override
     public String toString() {
         return String.format(
-            "ModelConfig{name=maral-b1.58-125m, vocab=%d, dModel=%d, " +
-                "nHeads=%d, enc=%d, dec=%d, maxSeq=%d, ckptDir=%s}",
+            "ModelConfig{vocab=%d, dModel=%d, nHeads=%d, enc=%d, dec=%d, maxSeq=%d, ckptDir=%s}",
             vocabSize,
             dModel,
             nHeads,

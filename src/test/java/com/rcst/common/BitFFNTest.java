@@ -1,24 +1,24 @@
-package com.rcst.layers;
+package com.rcst.common;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.training.ParameterStore;
-import com.rcst.ModelConfig;
 import com.rcst.TestFixture;
+import com.rcst.utils.ModelConfig;
 import junit.extensions.TestSetup;
 import junit.framework.Test;
 import junit.framework.TestCase;
 import junit.framework.TestSuite;
 
-public class BitEncoderBlockTest extends TestCase {
+public class BitFFNTest extends TestCase {
 
-    private static BitEncoderBlock block;
-    private static Shape SEQ_SHAPE; // (B, T, dModel)
+    private static BitFFN ffn;
+    private static Shape SEQ_SHAPE;
 
     public static Test suite() {
-        return new TestSetup(new TestSuite(BitEncoderBlockTest.class)) {
+        return new TestSetup(new TestSuite(BitFFNTest.class)) {
             @Override
             protected void setUp() throws Exception {
                 TestFixture.init();
@@ -28,16 +28,8 @@ public class BitEncoderBlockTest extends TestCase {
                     TestFixture.BLOCK_SIZE,
                     TestFixture.D_MODEL
                 );
-                block = new BitEncoderBlock(
-                    cfg.dModel,
-                    cfg.nHeads,
-                    cfg.dFfn,
-                    cfg.ropeBase,
-                    cfg.maxSeqLen,
-                    cfg.eps,
-                    cfg.quantEps
-                );
-                block.initialize(
+                ffn = new BitFFN(cfg.dModel, cfg.dFfn, cfg.quantEps);
+                ffn.initialize(
                     TestFixture.manager,
                     DataType.FLOAT32,
                     SEQ_SHAPE
@@ -57,15 +49,15 @@ public class BitEncoderBlockTest extends TestCase {
 
     public void testOutputShapeMatchesInput() {
         ParameterStore ps = TestFixture.freshPs();
-        NDArray out = block
+        NDArray out = ffn
             .forward(ps, new NDList(rand()), false)
             .singletonOrThrow();
         assertEquals(SEQ_SHAPE, out.getShape());
-        System.out.printf("BitEncoderBlock output: %s%n", out.getShape());
+        System.out.printf("BitFFN output: %s%n", out.getShape());
     }
 
     public void testGetOutputShapes() {
-        Shape[] out = block.getOutputShapes(new Shape[] { SEQ_SHAPE });
+        Shape[] out = ffn.getOutputShapes(new Shape[] { SEQ_SHAPE });
         assertEquals(1, out.length);
         assertEquals(SEQ_SHAPE, out[0]);
     }
@@ -74,7 +66,7 @@ public class BitEncoderBlockTest extends TestCase {
         ParameterStore ps = TestFixture.freshPs();
         assertEquals(
             DataType.FLOAT32,
-            block
+            ffn
                 .forward(ps, new NDList(rand()), false)
                 .singletonOrThrow()
                 .getDataType()
@@ -84,7 +76,7 @@ public class BitEncoderBlockTest extends TestCase {
     public void testOutputIsNonZero() {
         ParameterStore ps = TestFixture.freshPs();
         boolean hasNonZero = false;
-        for (float v : block
+        for (float v : ffn
             .forward(ps, new NDList(rand()), false)
             .singletonOrThrow()
             .toFloatArray()) {
@@ -93,71 +85,49 @@ public class BitEncoderBlockTest extends TestCase {
                 break;
             }
         }
-        assertTrue("encoder block output must not be all zeros", hasNonZero);
+        assertTrue("FFN must produce non-zero outputs", hasNonZero);
     }
 
-    /**
-     * The residual connection means output and input must differ
-     * (the sublayer adds something non-trivial to x).
-     */
-    public void testResidualChangesOutput() {
+    // ReLU^2 gates out all signal from a zero input — the down-projection
+    // multiplies nothing, so the output must also be zero.
+    public void testZeroInputGivesZeroOutput() {
         ParameterStore ps = TestFixture.freshPs();
-        NDArray x = rand();
-        NDArray out = block
-            .forward(ps, new NDList(x), false)
-            .singletonOrThrow();
-
-        float[] inArr = x.toFloatArray();
-        float[] outArr = out.toFloatArray();
-        boolean differs = false;
-        for (int i = 0; i < inArr.length; i++) {
-            if (Math.abs(inArr[i] - outArr[i]) > 1e-5f) {
-                differs = true;
-                break;
-            }
+        NDArray zeros = TestFixture.manager.zeros(SEQ_SHAPE, DataType.FLOAT32);
+        for (float v : ffn
+            .forward(ps, new NDList(zeros), false)
+            .singletonOrThrow()
+            .toFloatArray()) {
+            assertEquals("FFN(0) must be 0", 0f, v, 1e-5f);
         }
-        assertTrue("residual must modify the input", differs);
-        System.out.println("residual connection changes output ✓");
     }
 
-    /**
-     * With a key-padding mask of all zeros (no padding), output must equal
-     * the no-mask output — the mask should have no effect when inactive.
-     */
-    public void testAllZeroPaddingMaskHasNoEffect() {
+    public void testOutputIsDeterministic() {
         NDArray x = rand();
-        NDArray mask = TestFixture.manager.zeros(
-            new Shape(TestFixture.BATCH_SIZE, TestFixture.BLOCK_SIZE),
-            DataType.FLOAT32
-        );
-
-        float[] withMask = block
-            .forward(TestFixture.freshPs(), new NDList(x, mask), false)
-            .singletonOrThrow()
-            .toFloatArray();
-        float[] noMask = block
+        float[] out1 = ffn
             .forward(TestFixture.freshPs(), new NDList(x), false)
             .singletonOrThrow()
             .toFloatArray();
-
-        for (int i = 0; i < withMask.length; i++) {
+        float[] out2 = ffn
+            .forward(TestFixture.freshPs(), new NDList(x), false)
+            .singletonOrThrow()
+            .toFloatArray();
+        for (int i = 0; i < out1.length; i++) {
             assertEquals(
-                "zero mask must not affect output at " + i,
-                noMask[i],
-                withMask[i],
-                1e-4f
+                "output must be deterministic at " + i,
+                out1[i],
+                out2[i],
+                1e-5f
             );
         }
-        System.out.println("zero padding mask has no effect ✓");
     }
 
     public void testTrainingFlagDoesNotChangeShape() {
         NDArray x = rand();
-        Shape train = block
+        Shape train = ffn
             .forward(TestFixture.freshPs(), new NDList(x), true)
             .singletonOrThrow()
             .getShape();
-        Shape infer = block
+        Shape infer = ffn
             .forward(TestFixture.freshPs(), new NDList(x), false)
             .singletonOrThrow()
             .getShape();
@@ -165,8 +135,9 @@ public class BitEncoderBlockTest extends TestCase {
     }
 
     public void testToString() {
-        String s = block.toString();
-        assertTrue(s.contains("BitEncoderBlock"));
+        String s = ffn.toString();
+        assertTrue(s.contains("BitFFN"));
+        assertTrue(s.contains("dModel"));
         System.out.println(s);
     }
 }

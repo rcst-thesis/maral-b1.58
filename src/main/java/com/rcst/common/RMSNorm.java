@@ -1,4 +1,4 @@
-package com.rcst.layers;
+package com.rcst.common;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
@@ -51,8 +51,6 @@ public class RMSNorm extends AbstractBlock {
         );
     }
 
-    // ── Forward ───────────────────────────────────────────────────────────────
-
     @Override
     protected NDList forwardInternal(
         ParameterStore parameterStore,
@@ -78,14 +76,10 @@ public class RMSNorm extends AbstractBlock {
         return new NDList(normed);
     }
 
-    // ── Shape inference ───────────────────────────────────────────────────────
-
     @Override
     public Shape[] getOutputShapes(Shape[] inputShapes) {
         return new Shape[] { inputShapes[0] }; // same shape as input
     }
-
-    // ── Diagnostics ───────────────────────────────────────────────────────────
 
     @Override
     public String toString() {

@@ -46,7 +46,7 @@ public class BitLinearTest extends TestCase {
 
     public void testOutputShape() {
         ParameterStore ps = TestFixture.freshPs();
-        try (Batch batch = TestFixture.loader.sampleTrain()) {
+        try (Batch batch = TestFixture.embedder.getSampleFromTrainingSplit()) {
             NDArray out = pipeline(batch, ps);
             assertEquals(TestFixture.BATCH_SIZE, (int) out.getShape().get(0));
             assertEquals(TestFixture.BLOCK_SIZE, (int) out.getShape().get(1));
@@ -74,7 +74,7 @@ public class BitLinearTest extends TestCase {
 
     public void testOutputIsFloat32() {
         ParameterStore ps = TestFixture.freshPs();
-        try (Batch batch = TestFixture.loader.sampleTrain()) {
+        try (Batch batch = TestFixture.embedder.getSampleFromTrainingSplit()) {
             assertEquals(DataType.FLOAT32, pipeline(batch, ps).getDataType());
         }
     }
@@ -82,7 +82,7 @@ public class BitLinearTest extends TestCase {
     public void testWeightsAreTernary() {
         // trigger forward so parameters are initialised
         ParameterStore ps = TestFixture.freshPs();
-        try (Batch batch = TestFixture.loader.sampleTrain()) {
+        try (Batch batch = TestFixture.embedder.getSampleFromTrainingSplit()) {
             pipeline(batch, ps);
         }
 
@@ -99,14 +99,14 @@ public class BitLinearTest extends TestCase {
     }
 
     public void testOutputIsDeterministic() {
-        try (Batch batch = TestFixture.loader.sampleTrain()) {
+        try (Batch batch = TestFixture.embedder.getSampleFromTrainingSplit()) {
             NDArray ids = batch.getData().head();
 
             float[] out1 = bitLinear
                 .forward(
                     TestFixture.freshPs(),
                     new NDList(
-                        TestFixture.embeddingTable
+                        TestFixture.embedder
                             .forward(
                                 TestFixture.freshPs(),
                                 new NDList(ids),
@@ -123,7 +123,7 @@ public class BitLinearTest extends TestCase {
                 .forward(
                     TestFixture.freshPs(),
                     new NDList(
-                        TestFixture.embeddingTable
+                        TestFixture.embedder
                             .forward(
                                 TestFixture.freshPs(),
                                 new NDList(ids),
@@ -149,7 +149,7 @@ public class BitLinearTest extends TestCase {
 
     public void testOutputIsNonZero() {
         ParameterStore ps = TestFixture.freshPs();
-        try (Batch batch = TestFixture.loader.sampleTrain()) {
+        try (Batch batch = TestFixture.embedder.getSampleFromTrainingSplit()) {
             boolean hasNonZero = false;
             for (float v : pipeline(batch, ps).toFloatArray()) {
                 if (v != 0f) {
@@ -163,7 +163,7 @@ public class BitLinearTest extends TestCase {
 
     public void testTrainingFlagDoesNotChangeShape() {
         ParameterStore ps = TestFixture.freshPs();
-        try (Batch batch = TestFixture.loader.sampleTrain()) {
+        try (Batch batch = TestFixture.embedder.getSampleFromTrainingSplit()) {
             NDArray emb = TestFixture.embed(batch, ps);
             Shape train = bitLinear
                 .forward(ps, new NDList(emb), true)
@@ -180,7 +180,9 @@ public class BitLinearTest extends TestCase {
     public void testShapeIsConsistentAcrossBatches() {
         for (int i = 0; i < 3; i++) {
             ParameterStore ps = TestFixture.freshPs();
-            try (Batch batch = TestFixture.loader.sampleTrain()) {
+            try (
+                Batch batch = TestFixture.embedder.getSampleFromTrainingSplit()
+            ) {
                 NDArray out = pipeline(batch, ps);
                 assertEquals(
                     TestFixture.BATCH_SIZE,
@@ -197,7 +199,9 @@ public class BitLinearTest extends TestCase {
 
     public void testValBatchShape() {
         ParameterStore ps = TestFixture.freshPs();
-        try (Batch batch = TestFixture.loader.sampleValidation()) {
+        try (
+            Batch batch = TestFixture.embedder.getSampleFromValidationSplit()
+        ) {
             NDArray out = pipeline(batch, ps);
             assertEquals(TestFixture.BATCH_SIZE, (int) out.getShape().get(0));
             assertEquals(TestFixture.BLOCK_SIZE, (int) out.getShape().get(1));

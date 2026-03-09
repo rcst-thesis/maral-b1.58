@@ -1,4 +1,4 @@
-package com.rcst.layers;
+package com.rcst.common;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
@@ -8,6 +8,7 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.AbstractBlock;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+import com.rcst.layers.BitLinear;
 
 /**
  * BitNet b1.58 Feed-Forward Network (FFN).
@@ -37,11 +38,6 @@ public class BitFFN extends AbstractBlock {
     private final BitLinear wUp;
     private final BitLinear wDown;
 
-    /**
-     * @param dModel   model dimension (input and output)
-     * @param dFfn     hidden (intermediate) dimension
-     * @param quantEps epsilon for BitLinear weight quantization
-     */
     public BitFFN(int dModel, int dFfn, float quantEps) {
         this.dModel = dModel;
         this.dFfn = dFfn;
@@ -58,15 +54,12 @@ public class BitFFN extends AbstractBlock {
         DataType dataType,
         Shape... inputShapes
     ) {
-        Shape inShape = inputShapes[0]; // (B, T, dModel)
+        Shape inShape = inputShapes[0];
         wUp.initialize(manager, dataType, inShape);
 
         long[] hiddenDims = inShape.getShape().clone();
-        hiddenDims[hiddenDims.length - 1] = wUp
-            .getOutputShapes(new Shape[] { inShape })[0].get(
-                inShape.dimension() - 1
-            );
-        wDown.initialize(manager, dataType, new Shape(hiddenDims)); // (B, T, dFfn)
+        hiddenDims[hiddenDims.length - 1] = dFfn;
+        wDown.initialize(manager, dataType, new Shape(hiddenDims));
     }
 
     @Override
@@ -77,20 +70,44 @@ public class BitFFN extends AbstractBlock {
         PairList<String, Object> params
     ) {
         NDArray x = inputs.singletonOrThrow();
+        NDManager mgr = x.getManager();
 
-        // up-projection then squared ReLU
-        NDArray h = wUp.forward(ps, new NDList(x), training).singletonOrThrow();
-        NDArray activated = relu(h).square(); // ReLU²
+        // Use sub-manager to ensure intermediates (h, activated) are freed immediately
+        NDArray out;
+        try (NDManager ffnScope = mgr.newSubManager()) {
+            NDArray xScoped = x.duplicate();
+            xScoped.attach(ffnScope);
 
-        // down-projection back to dModel
-        NDArray out = wDown
-            .forward(ps, new NDList(activated), training)
-            .singletonOrThrow();
+            // up-projection: (B, T, dModel) -> (B, T, dFfn)
+            NDArray h = wUp
+                .forward(ps, new NDList(xScoped), training)
+                .singletonOrThrow();
+            h.attach(ffnScope);
+
+            // squared ReLU
+            NDArray activated = relu(h).square();
+            activated.attach(ffnScope);
+            h.close(); // free h immediately, no longer needed
+
+            // down-projection: (B, T, dFfn) -> (B, T, dModel)
+            NDArray y = wDown
+                .forward(ps, new NDList(activated), training)
+                .singletonOrThrow();
+            y.attach(ffnScope);
+            activated.close(); // free activated immediately
+
+            // Move result to parent manager
+            out = y.duplicate();
+            out.attach(mgr);
+
+            // Explicit cleanup
+            xScoped.close();
+            y.close();
+        }
 
         return new NDList(out);
     }
 
-    /** Element-wise ReLU: max(0, x). */
     private static NDArray relu(NDArray x) {
         return x.maximum(0f);
     }
